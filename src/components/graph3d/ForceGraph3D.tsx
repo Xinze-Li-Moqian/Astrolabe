@@ -17,7 +17,8 @@ import { useCanvasStore } from '@/lib/canvasStore'
 import ForceLayout, { PhysicsParams, DEFAULT_PHYSICS } from './ForceLayout'
 import { RadialLayout } from './layouts/RadialLayout'
 import { HierarchicalLayout } from './layouts/HierarchicalLayout'
-import DevPanel from '@/components/DevPanel'
+import ProfilerOverlay from '@/components/ProfilerOverlay'
+import { FrameProfilerHooks } from './FrameProfilerHooks'
 import {
   calculateBatchSpawnPositions,
   detectNodeChanges,
@@ -674,6 +675,7 @@ function GraphScene({
 
   return (
     <>
+      <FrameProfilerHooks />
       <ambientLight intensity={0.8} />
       <directionalLight position={[10, 15, 10]} intensity={3.0} />
       <pointLight position={[-10, -10, -10]} intensity={0.5} />
@@ -1409,7 +1411,7 @@ export function ForceGraph3D({
         )}
         {customNodes.length > 0 ? ` + ${customNodes.length} custom` : ''}
       </div>
-      <DevPanel className="absolute top-4 right-4" />
+      <ProfilerOverlay className="absolute top-4 right-4" />
 
       {/* Bubble context menu */}
       {contextMenu && (

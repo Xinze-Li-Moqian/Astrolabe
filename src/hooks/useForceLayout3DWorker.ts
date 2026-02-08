@@ -9,6 +9,7 @@ import { useRef, useCallback, useEffect, useState, useMemo } from 'react'
 import type { Node, Edge } from '@/lib/store'
 import { WorkerMessageType } from '@/lib/layout/ForceLayout3DWorker'
 import type { PhysicsConfig } from '@/lib/layout/ForceLayout3DWorker'
+import { profiler } from '@/lib/profiler'
 
 /**
  * Extract namespace from node name at specified depth
@@ -136,7 +137,7 @@ export function useForceLayout3DWorker(
       )
 
       worker.onmessage = (e) => {
-        const { type, positions, stableFrames: sf } = e.data
+        const { type, positions, stableFrames: sf, stepDur } = e.data
 
         if (type === WorkerMessageType.POSITIONS && positions) {
           // Update positions from worker
@@ -144,6 +145,11 @@ export function useForceLayout3DWorker(
           positionsRef.current = posMap
           setStableFrames(sf || 0)
           onUpdateRef.current?.()
+
+          // Push worker timing to profiler
+          if (stepDur !== undefined) {
+            profiler.pushWorkerSpan('worker.step', stepDur)
+          }
         } else if (type === WorkerMessageType.STABLE) {
           onStableRef.current?.()
         }

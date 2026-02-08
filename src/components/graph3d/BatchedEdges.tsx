@@ -16,6 +16,7 @@ import { useRef, useMemo, useEffect } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { Edge } from '@/types/node'
+import { profiler } from '@/lib/profiler'
 
 interface BatchedEdgesProps {
   edges: Edge[]
@@ -79,55 +80,54 @@ export function BatchedEdges({
     const positions = positionsRef.current
     if (positions.size === 0) return
 
-    const posArray = positionAttr.array as Float32Array
-    const colorArray = colorAttr.array as Float32Array
+    profiler.span('edges.update', () => {
+      const posArray = positionAttr.array as Float32Array
+      const colorArray = colorAttr.array as Float32Array
 
-    let hasValidPositions = false
+      for (let i = 0; i < edges.length; i++) {
+        const edge = edges[i]
+        const startPos = positions.get(edge.source)
+        const endPos = positions.get(edge.target)
 
-    for (let i = 0; i < edges.length; i++) {
-      const edge = edges[i]
-      const startPos = positions.get(edge.source)
-      const endPos = positions.get(edge.target)
+        const baseIdx = i * 6 // 2 vertices * 3 components
 
-      const baseIdx = i * 6 // 2 vertices * 3 components
+        if (startPos && endPos) {
+          // Start vertex
+          posArray[baseIdx] = startPos[0]
+          posArray[baseIdx + 1] = startPos[1]
+          posArray[baseIdx + 2] = startPos[2]
 
-      if (startPos && endPos) {
-        hasValidPositions = true
-        // Start vertex
-        posArray[baseIdx] = startPos[0]
-        posArray[baseIdx + 1] = startPos[1]
-        posArray[baseIdx + 2] = startPos[2]
+          // End vertex
+          posArray[baseIdx + 3] = endPos[0]
+          posArray[baseIdx + 4] = endPos[1]
+          posArray[baseIdx + 5] = endPos[2]
+        }
 
-        // End vertex
-        posArray[baseIdx + 3] = endPos[0]
-        posArray[baseIdx + 4] = endPos[1]
-        posArray[baseIdx + 5] = endPos[2]
+        // Determine color
+        const edgeKey = `${edge.source}->${edge.target}`
+        let color = defaultColorVec
+
+        if (dimmedEdgeIds?.has(edgeKey)) {
+          color = dimmedColorVec
+        } else if (highlightedEdgeIds?.has(edgeKey)) {
+          color = highlightColorVec
+        }
+
+        // Start vertex color
+        colorArray[baseIdx] = color.r
+        colorArray[baseIdx + 1] = color.g
+        colorArray[baseIdx + 2] = color.b
+
+        // End vertex color
+        colorArray[baseIdx + 3] = color.r
+        colorArray[baseIdx + 4] = color.g
+        colorArray[baseIdx + 5] = color.b
       }
 
-      // Determine color
-      const edgeKey = `${edge.source}->${edge.target}`
-      let color = defaultColorVec
-
-      if (dimmedEdgeIds?.has(edgeKey)) {
-        color = dimmedColorVec
-      } else if (highlightedEdgeIds?.has(edgeKey)) {
-        color = highlightColorVec
-      }
-
-      // Start vertex color
-      colorArray[baseIdx] = color.r
-      colorArray[baseIdx + 1] = color.g
-      colorArray[baseIdx + 2] = color.b
-
-      // End vertex color
-      colorArray[baseIdx + 3] = color.r
-      colorArray[baseIdx + 4] = color.g
-      colorArray[baseIdx + 5] = color.b
-    }
-
-    positionAttr.needsUpdate = true
-    colorAttr.needsUpdate = true
-    // Note: frustumCulled={false} so no need to computeBoundingSphere()
+      positionAttr.needsUpdate = true
+      colorAttr.needsUpdate = true
+      // Note: frustumCulled={false} so no need to computeBoundingSphere()
+    }, { edgeCount: edges.length })
   })
 
   // Cleanup

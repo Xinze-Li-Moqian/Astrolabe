@@ -553,7 +553,9 @@ export function createWorkerHandler() {
       case WorkerMessageType.STEP:
         if (!state || !running) return
 
+        const stepStart = performance.now()
         const movement = simulateStep(state, data?.dt || 0.016)
+        const stepDur = performance.now() - stepStart
 
         // Check stability
         if (isStable(movement)) {
@@ -565,12 +567,13 @@ export function createWorkerHandler() {
           stableFrames = 0
         }
 
-        // Send positions back
+        // Send positions back (with step duration for profiling)
         self.postMessage({
           type: WorkerMessageType.POSITIONS,
           positions: Array.from(state.positions.entries()),
           movement,
           stableFrames,
+          stepDur,
         })
         break
 

@@ -23,6 +23,7 @@ import {
   type GraphFilterOptions,
   DEFAULT_FILTER_OPTIONS,
 } from '@/lib/graphProcessing'
+import { profiler } from '@/lib/profiler'
 import { history } from '@/lib/history'
 
 // Re-export types for backward compatibility
@@ -256,7 +257,12 @@ export function useGraphData(projectPath: string): GraphData {
   // ============================================
   const { nodes, edges, stats: filterStats } = useMemo(
     () => {
+      const t0 = performance.now()
       const result = processGraph(rawNodes, rawEdges, filterOptions)
+      profiler.recordOneShot('graph.processGraph', performance.now() - t0, {
+        inputNodes: rawNodes.length,
+        outputNodes: result.nodes.length,
+      })
       const hasChanges = result.stats.removedNodes > 0 ||
         result.stats.orphanedNodes > 0 ||
         result.stats.transitiveEdgesRemoved > 0

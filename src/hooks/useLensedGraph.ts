@@ -14,6 +14,7 @@ import { useMemo, useCallback } from 'react'
 import type { AstrolabeNode as Node, AstrolabeEdge as Edge } from '@/types/graph'
 import { useLensStore } from '@/lib/lensStore'
 import { applyLens } from '@/lib/lenses/pipeline'
+import { profiler } from '@/lib/profiler'
 import type { LensPipelineResult, NamespaceGroup, LensLayout } from '@/lib/lenses/types'
 import {
   toggleGroupExpandedUndoable,
@@ -54,7 +55,8 @@ export function useLensedGraph(
 
   // Apply lens transformation (memoized for performance)
   const pipelineResult = useMemo<LensPipelineResult>(() => {
-    return applyLens(
+    const t0 = performance.now()
+    const result = applyLens(
       activeLensId,
       rawNodes,
       rawEdges,
@@ -62,6 +64,12 @@ export function useLensedGraph(
       options,
       expandedGroups
     )
+    profiler.recordOneShot('graph.applyLens', performance.now() - t0, {
+      lensId: activeLensId,
+      inputNodes: rawNodes.length,
+      outputNodes: result.nodes.length,
+    })
+    return result
   }, [activeLensId, rawNodes, rawEdges, lensFocusNodeId, options, expandedGroups])
 
   return {
