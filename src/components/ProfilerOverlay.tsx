@@ -16,12 +16,29 @@ import { profiler, type FrameTrace, type SpanAggregate } from '@/lib/profiler'
 // ============================================
 
 const SPAN_COLORS: Record<string, string> = {
+  'frame.render.gl': '#60a5fa', // blue-400
   'layout.repulsion': '#3b82f6', // blue-500
   'layout.springs': '#06b6d4',   // cyan-500
   'layout.center': '#8b5cf6',    // violet-500
   'layout.integrate': '#22c55e', // green-500
+  'layout.radial.init': '#0ea5e9', // sky-500
+  'layout.radial.step': '#0284c7', // sky-600
+  'layout.radial.forces': '#0891b2', // cyan-600
+  'layout.radial.integrate': '#10b981', // emerald-500
+  'layout.hierarchical.init': '#a78bfa', // violet-400
+  'layout.hierarchical.step': '#8b5cf6', // violet-500
+  'layout.hierarchical.repulsion': '#7c3aed', // violet-600
   'edges.update': '#a855f7',     // purple-500
   'worker.step': '#f59e0b',      // amber-500
+  'worker.transfer.in': '#f59e0b', // amber-500
+  'worker.compute.repulsion': '#f97316', // orange-500
+  'worker.compute.springs': '#fb923c', // orange-400
+  'worker.compute.center': '#facc15', // yellow-400
+  'worker.compute.clustering': '#eab308', // yellow-500
+  'worker.compute.integrate': '#84cc16', // lime-500
+  'worker.serialize.positions': '#d97706', // amber-600
+  'worker.transfer.out': '#b45309', // amber-700
+  'worker.deserialize.positions': '#c2410c', // orange-700
   'graph.processGraph': '#f97316', // orange-500
   'graph.applyLens': '#ec4899',  // pink-500
 }
@@ -261,7 +278,7 @@ function TimelineTab({ frames, onSelectFrame, selectedFrameIdx }: {
 // ============================================
 
 function HotspotsTab({ aggregates }: { aggregates: SpanAggregate[] }) {
-  const [sortKey, setSortKey] = useState<'p95' | 'avg' | 'max'>('p95')
+  const [sortKey, setSortKey] = useState<'selfP95' | 'p95' | 'avg' | 'max'>('selfP95')
 
   const sorted = useMemo(() => {
     return [...aggregates].sort((a, b) => b[sortKey] - a[sortKey])
@@ -273,16 +290,22 @@ function HotspotsTab({ aggregates }: { aggregates: SpanAggregate[] }) {
       <div className="flex gap-1 text-white/40 text-[9px] mb-1 px-0.5">
         <span className="flex-1">Span</span>
         <button
-          className={`w-12 text-right ${sortKey === 'avg' ? 'text-white/80' : ''}`}
-          onClick={() => setSortKey('avg')}
+          className={`w-12 text-right ${sortKey === 'selfP95' ? 'text-white/80' : ''}`}
+          onClick={() => setSortKey('selfP95')}
         >
-          avg
+          self95
         </button>
         <button
           className={`w-12 text-right ${sortKey === 'p95' ? 'text-white/80' : ''}`}
           onClick={() => setSortKey('p95')}
         >
           p95
+        </button>
+        <button
+          className={`w-12 text-right ${sortKey === 'avg' ? 'text-white/80' : ''}`}
+          onClick={() => setSortKey('avg')}
+        >
+          avg
         </button>
         <button
           className={`w-12 text-right ${sortKey === 'max' ? 'text-white/80' : ''}`}
@@ -298,7 +321,7 @@ function HotspotsTab({ aggregates }: { aggregates: SpanAggregate[] }) {
           <div
             key={agg.name}
             className={`flex gap-1 items-center px-0.5 rounded ${
-              agg.p95 > 5 ? 'bg-red-500/10' : ''
+              agg.selfP95 > 5 ? 'bg-red-500/10' : ''
             }`}
           >
             <div
@@ -306,11 +329,14 @@ function HotspotsTab({ aggregates }: { aggregates: SpanAggregate[] }) {
               style={{ backgroundColor: getSpanColor(agg.name) }}
             />
             <span className="flex-1 truncate text-white/70">{agg.name}</span>
+            <span className="w-12 text-right tabular-nums text-white/80">
+              {formatMs(agg.selfP95)}
+            </span>
+            <span className="w-12 text-right tabular-nums text-white/50">
+              {formatMs(agg.p95)}
+            </span>
             <span className="w-12 text-right tabular-nums text-white/60">
               {formatMs(agg.avg)}
-            </span>
-            <span className="w-12 text-right tabular-nums text-white/80">
-              {formatMs(agg.p95)}
             </span>
             <span className="w-12 text-right tabular-nums text-white/60">
               {formatMs(agg.max)}
@@ -423,42 +449,38 @@ export default function ProfilerOverlay({ className = '' }: ProfilerOverlayProps
   return (
     <div
       className={`font-mono text-[10px] leading-tight bg-black/80 text-white/90 rounded border border-white/10 select-none ${className}`}
-      style={{ minWidth: expanded ? 320 : 160, maxWidth: expanded ? 420 : 200 }}
+      style={{ minWidth: expanded ? 360 : 240, maxWidth: expanded ? 520 : 360 }}
     >
       {/* Compact header (always visible) */}
       <div
         className="p-2 cursor-pointer"
         onClick={() => setExpanded(!expanded)}
       >
-        <div className="flex items-center gap-2 mb-1">
-          <div
-            className="w-2 h-2 rounded-full flex-shrink-0"
-            style={{ backgroundColor: getFpsColor(fps) }}
-          />
-          <span className="text-white font-semibold" style={{ fontSize: 14 }}>
-            {fps}
-          </span>
-          <span className="text-white/50">FPS</span>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 min-w-[78px]">
+            <div
+              className="w-2 h-2 rounded-full flex-shrink-0"
+              style={{ backgroundColor: getFpsColor(fps) }}
+            />
+            <span className="text-white font-semibold" style={{ fontSize: 14 }}>
+              {fps}
+            </span>
+            <span className="text-white/50">FPS</span>
+          </div>
+
           {lastFrame && (
-            <span className="text-white/40 ml-auto">
+            <span className="text-white/40 tabular-nums min-w-[44px]">
               {formatMs(lastFrame.dur)}ms
             </span>
           )}
-        </div>
 
-        <div className="flex items-center gap-2">
-          <Sparkline frames={sparklineFrames} width={expanded ? 200 : 100} height={20} />
-          <div className="flex flex-col text-[9px] text-white/40">
-            <span>{profiler.nodeCount}n</span>
-            <span>{profiler.edgeCount}e</span>
+          <Sparkline frames={sparklineFrames} width={expanded ? 220 : 140} height={20} />
+
+          <div className="flex flex-col text-[9px] text-white/40 text-right min-w-[54px]">
+            <span>{profiler.nodeCount}n/{profiler.edgeCount}e</span>
+            <span>{topSpanMs > 0 ? `phys ${formatMs(topSpanMs)}ms` : '-'}</span>
           </div>
         </div>
-
-        {!expanded && topSpanMs > 0 && (
-          <div className="mt-1 text-[9px] text-white/40">
-            physics: {formatMs(topSpanMs)}ms
-          </div>
-        )}
       </div>
 
       {/* Expanded panel */}
@@ -521,7 +543,11 @@ export default function ProfilerOverlay({ className = '' }: ProfilerOverlayProps
               {Object.entries(SPAN_COLORS).map(([name, color]) => (
                 <div key={name} className="flex items-center gap-0.5 text-[8px] text-white/40">
                   <div className="w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: color }} />
-                  {name.split('.')[1] || name}
+                  {(() => {
+                    const parts = name.split('.')
+                    if (parts.length >= 3) return `${parts[1]}.${parts[2]}`
+                    return parts[1] || name
+                  })()}
                 </div>
               ))}
             </div>

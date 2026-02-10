@@ -8,7 +8,7 @@
 import { useRef, useCallback, useEffect, useState, useMemo } from 'react'
 import type { Node, Edge } from '@/lib/store'
 import { WorkerMessageType } from '@/lib/layout/ForceLayout3DWorker'
-import type { PhysicsConfig } from '@/lib/layout/ForceLayout3DWorker'
+import type { PhysicsConfig, WorkerMessagePhaseDurations } from '@/lib/layout/ForceLayout3DWorker'
 import { profiler } from '@/lib/profiler'
 
 /**
@@ -90,6 +90,7 @@ export function useForceLayout3DWorker(
   const velocitiesRef = useRef<Map<string, [number, number, number]>>(new Map())
   const workerRef = useRef<Worker | null>(null)
   const animationFrameRef = useRef<number | null>(null)
+  const stepSeqRef = useRef(0)
   const [isRunning, setIsRunning] = useState(false)
   const [stableFrames, setStableFrames] = useState(0)
 
@@ -137,18 +138,53 @@ export function useForceLayout3DWorker(
       )
 
       worker.onmessage = (e) => {
-        const { type, positions, stableFrames: sf, stepDur } = e.data
+        const {
+          type,
+          positions,
+          stableFrames: sf,
+          stepDur,
+          phaseDurations,
+          workerSentAt,
+        }: {
+          type: string
+          positions?: Array<[string, [number, number, number]]>
+          stableFrames?: number
+          stepDur?: number
+          phaseDurations?: WorkerMessagePhaseDurations
+          workerSentAt?: number
+        } = e.data
 
         if (type === WorkerMessageType.POSITIONS && positions) {
           // Update positions from worker
+          const decodeStart = performance.now()
           const posMap = new Map<string, [number, number, number]>(positions)
+          const decodeDur = performance.now() - decodeStart
           positionsRef.current = posMap
           setStableFrames(sf || 0)
           onUpdateRef.current?.()
 
-          // Push worker timing to profiler
-          if (stepDur !== undefined) {
-            profiler.pushWorkerSpan('worker.step', stepDur)
+          // Push worker timing breakdown to profiler.
+          if (phaseDurations) {
+            const pushPhase = (name: string, dur: number, meta?: Record<string, number | string>) => {
+              if (dur > 0.01) profiler.pushWorkerSpan(name, dur, meta)
+            }
+            pushPhase('worker.transfer.in', phaseDurations.transferIn)
+            pushPhase('worker.compute.repulsion', phaseDurations.repulsion, { nodeCount: posMap.size })
+            pushPhase('worker.compute.springs', phaseDurations.springs)
+            pushPhase('worker.compute.center', phaseDurations.center)
+            pushPhase('worker.compute.clustering', phaseDurations.clustering)
+            pushPhase('worker.compute.integrate', phaseDurations.integrate, { nodeCount: posMap.size })
+            pushPhase('worker.serialize.positions', phaseDurations.serialize, { nodeCount: posMap.size })
+            if (typeof workerSentAt === 'number') {
+              const transferOut = Math.max(0, performance.now() - workerSentAt)
+              pushPhase('worker.transfer.out', transferOut)
+            }
+          } else if (stepDur !== undefined) {
+            profiler.pushWorkerSpan('worker.step', stepDur, { nodeCount: posMap.size })
+          }
+
+          if (decodeDur > 0.01) {
+            profiler.recordOneShot('worker.deserialize.positions', decodeDur, { nodeCount: posMap.size })
           }
         } else if (type === WorkerMessageType.STABLE) {
           onStableRef.current?.()
@@ -197,7 +233,14 @@ export function useForceLayout3DWorker(
       // Request steps at 60fps
       const requestStep = () => {
         if (!workerRef.current) return
-        workerRef.current.postMessage({ type: WorkerMessageType.STEP })
+        stepSeqRef.current++
+        workerRef.current.postMessage({
+          type: WorkerMessageType.STEP,
+          data: {
+            stepId: stepSeqRef.current,
+            clientSentAt: performance.now(),
+          },
+        })
         animationFrameRef.current = requestAnimationFrame(requestStep)
       }
       requestStep()

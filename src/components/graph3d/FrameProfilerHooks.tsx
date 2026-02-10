@@ -26,7 +26,20 @@ export function FrameProfilerHooks() {
   // Render scene + end frame - runs LAST
   // Because priority > 0, R3F won't auto-render; we do it here
   useFrame(({ gl, scene, camera }) => {
-    gl.render(scene, camera)
+    profiler.span('frame.render.gl', () => {
+      gl.render(scene, camera)
+    })
+
+    if (profiler.enabled) {
+      const info = gl.info
+      profiler.rendererStats = {
+        drawCalls: info.render.calls,
+        triangles: info.render.triangles,
+        geometries: info.memory.geometries,
+        textures: info.memory.textures,
+      }
+    }
+
     profiler.endFrame()
   }, 10000)
 

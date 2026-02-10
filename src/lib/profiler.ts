@@ -35,6 +35,10 @@ export interface SpanAggregate {
   p95: number
   max: number
   last: number
+  selfAvg: number
+  selfP95: number
+  selfMax: number
+  selfLast: number
 }
 
 // ============================================
@@ -43,6 +47,7 @@ export interface SpanAggregate {
 
 const RING_SIZE = 240 // ~4s at 60fps
 const NOTIFY_INTERVAL = 8 // notify listeners every N frames
+const MAX_PENDING_ONE_SHOTS = 1024 // cap to avoid unbounded growth when frames are paused
 
 type FrameListener = () => void
 
@@ -119,15 +124,24 @@ export class Profiler {
   }
 
   pushWorkerSpan(name: string, dur: number, meta?: Record<string, number | string>): void {
-    if (!this.enabled || !this._currentFrame) return
-    this._currentFrame.spans.push({
+    if (!this.enabled) return
+    const span: SpanEvent = {
       name,
       start: performance.now() - dur, // approximate
       dur,
       depth: 0,
       thread: 'worker',
       meta,
-    })
+    }
+    if (this._currentFrame) {
+      this._currentFrame.spans.push(span)
+      return
+    }
+    // If worker events arrive outside frame bounds, flush into the next frame.
+    this._pendingOneShots.push(span)
+    if (this._pendingOneShots.length > MAX_PENDING_ONE_SHOTS) {
+      this._pendingOneShots.splice(0, this._pendingOneShots.length - MAX_PENDING_ONE_SHOTS)
+    }
   }
 
   recordOneShot(name: string, dur: number, meta?: Record<string, number | string>): void {
@@ -140,6 +154,9 @@ export class Profiler {
       thread: 'main',
       meta,
     })
+    if (this._pendingOneShots.length > MAX_PENDING_ONE_SHOTS) {
+      this._pendingOneShots.splice(0, this._pendingOneShots.length - MAX_PENDING_ONE_SHOTS)
+    }
   }
 
   // ---- Ring buffer accessors ----
@@ -167,34 +184,102 @@ export class Profiler {
     const frames = this.getFrames(windowSize)
     if (frames.length === 0) return []
 
-    // Collect durations per span name
+    // Collect total and exclusive durations per span name.
     const spanDurations = new Map<string, number[]>()
+    const spanSelfDurations = new Map<string, number[]>()
     for (const frame of frames) {
-      for (const span of frame.spans) {
-        let arr = spanDurations.get(span.name)
-        if (!arr) {
-          arr = []
-          spanDurations.set(span.name, arr)
+      const selfDurations = this._computeSelfDurations(frame.spans)
+      for (let i = 0; i < frame.spans.length; i++) {
+        const span = frame.spans[i]
+        let totalArr = spanDurations.get(span.name)
+        if (!totalArr) {
+          totalArr = []
+          spanDurations.set(span.name, totalArr)
         }
-        arr.push(span.dur)
+        totalArr.push(span.dur)
+
+        let selfArr = spanSelfDurations.get(span.name)
+        if (!selfArr) {
+          selfArr = []
+          spanSelfDurations.set(span.name, selfArr)
+        }
+        selfArr.push(selfDurations[i])
       }
     }
 
-    const result: SpanAggregate[] = []
-    for (const [name, durations] of spanDurations) {
-      const sorted = [...durations].sort((a, b) => a - b)
+    const calcStats = (values: number[]) => {
+      const sorted = [...values].sort((a, b) => a - b)
       const count = sorted.length
       const avg = sorted.reduce((a, b) => a + b, 0) / count
       const p95Idx = Math.min(Math.floor(count * 0.95), count - 1)
       const p95 = sorted[p95Idx]
       const max = sorted[count - 1]
-      const last = durations[durations.length - 1]
-      result.push({ name, count, avg, p95, max, last })
+      const last = values[values.length - 1]
+      return { count, avg, p95, max, last }
     }
 
-    // Sort by p95 descending
-    result.sort((a, b) => b.p95 - a.p95)
+    const result: SpanAggregate[] = []
+    for (const [name, totalValues] of spanDurations) {
+      const selfValues = spanSelfDurations.get(name) ?? totalValues
+      const totalStats = calcStats(totalValues)
+      const selfStats = calcStats(selfValues)
+      result.push({
+        name,
+        count: totalStats.count,
+        avg: totalStats.avg,
+        p95: totalStats.p95,
+        max: totalStats.max,
+        last: totalStats.last,
+        selfAvg: selfStats.avg,
+        selfP95: selfStats.p95,
+        selfMax: selfStats.max,
+        selfLast: selfStats.last,
+      })
+    }
+
+    // Sort by exclusive p95 descending (most actionable for nested spans).
+    result.sort((a, b) => b.selfP95 - a.selfP95)
     return result
+  }
+
+  private _computeSelfDurations(spans: SpanEvent[]): number[] {
+    const selfDurations = spans.map((s) => s.dur)
+    const EPS = 1e-3
+
+    const mainSpans = spans
+      .map((span, idx) => ({ span, idx, end: span.start + span.dur }))
+      .filter((entry) => entry.span.thread === 'main')
+      .sort((a, b) => {
+        if (a.span.start !== b.span.start) return a.span.start - b.span.start
+        if (a.span.depth !== b.span.depth) return a.span.depth - b.span.depth
+        return b.span.dur - a.span.dur
+      })
+
+    const stack: Array<{ idx: number; depth: number; end: number }> = []
+
+    for (const entry of mainSpans) {
+      while (stack.length > 0) {
+        const top = stack[stack.length - 1]
+        const isAfterTop = entry.span.start >= top.end - EPS
+        const isNotDeeper = entry.span.depth <= top.depth
+        const exceedsTop = entry.end > top.end + EPS
+        if (!isAfterTop && !isNotDeeper && !exceedsTop) break
+        stack.pop()
+      }
+
+      if (stack.length > 0) {
+        const parent = stack[stack.length - 1]
+        selfDurations[parent.idx] -= entry.span.dur
+      }
+
+      stack.push({ idx: entry.idx, depth: entry.span.depth, end: entry.end })
+    }
+
+    for (let i = 0; i < selfDurations.length; i++) {
+      if (selfDurations[i] < 0) selfDurations[i] = 0
+    }
+
+    return selfDurations
   }
 
   // ---- Listeners ----

@@ -387,14 +387,46 @@ export function isStable(totalMovement: number, threshold: number = 0.01): boole
 
 /**
  * Execute one physics simulation step
- * Returns total movement (for stability detection)
+ * Returns total movement and phase timings for profiling
  */
-export function simulateStep(state: SimulationState, dt: number = 0.016): number {
+export interface WorkerStepPhaseDurations {
+  repulsion: number
+  springs: number
+  center: number
+  clustering: number
+  integrate: number
+  total: number
+}
+
+export interface WorkerMessagePhaseDurations extends WorkerStepPhaseDurations {
+  transferIn: number
+  serialize: number
+}
+
+export interface WorkerStepResult {
+  movement: number
+  phases: WorkerStepPhaseDurations
+}
+
+export function simulateStep(state: SimulationState, dt: number = 0.016): WorkerStepResult {
+  const totalStart = performance.now()
   const { positions, velocities, edges, physics, namespaceGroups } = state
   const nodeIds = Array.from(positions.keys())
   const nodeCount = nodeIds.length
 
-  if (nodeCount === 0) return 0
+  if (nodeCount === 0) {
+    return {
+      movement: 0,
+      phases: {
+        repulsion: 0,
+        springs: 0,
+        center: 0,
+        clustering: 0,
+        integrate: 0,
+        total: 0,
+      },
+    }
+  }
 
   // Initialize forces
   const forces = new Map<string, [number, number, number]>()
@@ -403,6 +435,7 @@ export function simulateStep(state: SimulationState, dt: number = 0.016): number
   }
 
   // Compute repulsion (use array format for performance)
+  const repulsionStart = performance.now()
   const posArray: [number, number, number][] = []
   const forceArray: [number, number, number][] = []
   for (const id of nodeIds) {
@@ -419,8 +452,10 @@ export function simulateStep(state: SimulationState, dt: number = 0.016): number
     f[1] += forceArray[i][1]
     f[2] += forceArray[i][2]
   }
+  const repulsionDur = performance.now() - repulsionStart
 
   // Compute spring forces (with optional adaptive length)
+  const springsStart = performance.now()
   const nodeDegrees = state.nodeDegrees || (physics.adaptiveSpringEnabled ? computeNodeDegrees(edges) : null)
 
   if (physics.adaptiveSpringEnabled && nodeDegrees) {
@@ -468,19 +503,26 @@ export function simulateStep(state: SimulationState, dt: number = 0.016): number
       springStrength: physics.springStrength,
     })
   }
+  const springsDur = performance.now() - springsStart
 
   // Compute center gravity
+  const centerStart = performance.now()
   computeCenterGravity(positions, forces, physics.centerStrength)
+  const centerDur = performance.now() - centerStart
 
   // Compute clustering forces (if enabled)
+  let clusteringDur = 0
   if (physics.clusteringEnabled && namespaceGroups && namespaceGroups.size > 0) {
+    const clusteringStart = performance.now()
     computeClusteringForces(namespaceGroups, positions, forces, {
       clusteringStrength: physics.clusteringStrength || 0.3,
       clusterSeparation: physics.clusterSeparation || 0.5,
     })
+    clusteringDur = performance.now() - clusteringStart
   }
 
   // Apply forces and update positions
+  const integrateStart = performance.now()
   const maxVelocity = 10
   let totalMovement = 0
 
@@ -505,8 +547,19 @@ export function simulateStep(state: SimulationState, dt: number = 0.016): number
 
     totalMovement += Math.abs(vel[0]) + Math.abs(vel[1]) + Math.abs(vel[2])
   }
+  const integrateDur = performance.now() - integrateStart
 
-  return totalMovement
+  return {
+    movement: totalMovement,
+    phases: {
+      repulsion: repulsionDur,
+      springs: springsDur,
+      center: centerDur,
+      clustering: clusteringDur,
+      integrate: integrateDur,
+      total: performance.now() - totalStart,
+    },
+  }
 }
 
 // ============================================
@@ -553,12 +606,15 @@ export function createWorkerHandler() {
       case WorkerMessageType.STEP:
         if (!state || !running) return
 
-        const stepStart = performance.now()
-        const movement = simulateStep(state, data?.dt || 0.016)
-        const stepDur = performance.now() - stepStart
+        const receivedAt = performance.now()
+        const transferIn = typeof data?.clientSentAt === 'number'
+          ? Math.max(0, receivedAt - data.clientSentAt)
+          : 0
+        const step = simulateStep(state, data?.dt || 0.016)
+        const stepDur = step.phases.total
 
         // Check stability
-        if (isStable(movement)) {
+        if (isStable(step.movement)) {
           stableFrames++
           if (stableFrames > 60) {
             self.postMessage({ type: WorkerMessageType.STABLE })
@@ -567,13 +623,25 @@ export function createWorkerHandler() {
           stableFrames = 0
         }
 
+        const serializeStart = performance.now()
+        const positionsPayload = Array.from(state.positions.entries())
+        const serializeDur = performance.now() - serializeStart
+        const workerSentAt = performance.now()
+        const phaseDurations: WorkerMessagePhaseDurations = {
+          ...step.phases,
+          transferIn,
+          serialize: serializeDur,
+        }
+
         // Send positions back (with step duration for profiling)
         self.postMessage({
           type: WorkerMessageType.POSITIONS,
-          positions: Array.from(state.positions.entries()),
-          movement,
+          positions: positionsPayload,
+          movement: step.movement,
           stableFrames,
           stepDur,
+          phaseDurations,
+          workerSentAt,
         })
         break
 

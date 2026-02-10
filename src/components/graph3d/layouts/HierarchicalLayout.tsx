@@ -8,6 +8,7 @@
 import { useEffect, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import type { AstrolabeNode, AstrolabeEdge } from '@/types/graph'
+import { profiler } from '@/lib/profiler'
 
 // ============================================
 // Types
@@ -171,6 +172,7 @@ export function HierarchicalLayout({
   // Initialize positions on mount or when data changes
   useEffect(() => {
     if (!focusNodeId || nodes.length === 0) return
+    const t0 = performance.now()
 
     const positions = calculateHierarchicalPositions(
       nodes,
@@ -188,56 +190,71 @@ export function HierarchicalLayout({
 
     initialized.current = true
     frameCount.current = 0
+    profiler.recordOneShot('layout.hierarchical.init', performance.now() - t0, {
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      focusNode: focusNodeId,
+      direction,
+    })
   }, [nodes, edges, focusNodeId, direction, layerSpacing, nodeSpacing, positionsRef])
 
   // Optional physics for gentle within-layer repulsion
   useFrame(() => {
-    if (!initialized.current) return
+    profiler.span('layout.hierarchical.step', () => {
+      if (profiler.enabled) {
+        profiler.nodeCount = nodes.length
+        profiler.edgeCount = edges.length
+      }
 
-    frameCount.current++
+      if (!initialized.current) return
 
-    // Signal ready after a few frames
-    if (frameCount.current === 3 && onLayoutReady) {
-      onLayoutReady()
-    }
+      frameCount.current++
 
-    if (!enablePhysics) return
+      // Signal ready after a few frames
+      if (frameCount.current === 3 && onLayoutReady) {
+        onLayoutReady()
+      }
 
-    // Gentle horizontal repulsion within layers
-    // Group nodes by their current Y position (layer)
-    const layerMap = new Map<number, string[]>()
-    for (const node of nodes) {
-      const pos = positionsRef.current.get(node.id)
-      if (!pos) continue
-      const layerY = Math.round(pos[1] / layerSpacing) * layerSpacing
-      if (!layerMap.has(layerY)) layerMap.set(layerY, [])
-      layerMap.get(layerY)!.push(node.id)
-    }
+      if (!enablePhysics) return
 
-    // Apply repulsion within each layer
-    const repulsionStrength = 0.1
-    const minDistance = nodeSpacing * 0.8
+      // Gentle horizontal repulsion within layers
+      // Group nodes by their current Y position (layer)
+      const layerMap = new Map<number, string[]>()
+      for (const node of nodes) {
+        const pos = positionsRef.current.get(node.id)
+        if (!pos) continue
+        const layerY = Math.round(pos[1] / layerSpacing) * layerSpacing
+        if (!layerMap.has(layerY)) layerMap.set(layerY, [])
+        layerMap.get(layerY)!.push(node.id)
+      }
 
-    for (const nodeIds of layerMap.values()) {
-      if (nodeIds.length < 2) continue
+      profiler.span('layout.hierarchical.repulsion', () => {
+        // Apply repulsion within each layer
+        const repulsionStrength = 0.1
+        const minDistance = nodeSpacing * 0.8
 
-      for (let i = 0; i < nodeIds.length; i++) {
-        for (let j = i + 1; j < nodeIds.length; j++) {
-          const posA = positionsRef.current.get(nodeIds[i])!
-          const posB = positionsRef.current.get(nodeIds[j])!
+        for (const nodeIds of layerMap.values()) {
+          if (nodeIds.length < 2) continue
 
-          const dx = posA[0] - posB[0]
-          const distance = Math.abs(dx)
+          for (let i = 0; i < nodeIds.length; i++) {
+            for (let j = i + 1; j < nodeIds.length; j++) {
+              const posA = positionsRef.current.get(nodeIds[i])!
+              const posB = positionsRef.current.get(nodeIds[j])!
 
-          if (distance < minDistance && distance > 0.01) {
-            const force = (minDistance - distance) * repulsionStrength
-            const sign = dx > 0 ? 1 : -1
-            posA[0] += sign * force
-            posB[0] -= sign * force
+              const dx = posA[0] - posB[0]
+              const distance = Math.abs(dx)
+
+              if (distance < minDistance && distance > 0.01) {
+                const force = (minDistance - distance) * repulsionStrength
+                const sign = dx > 0 ? 1 : -1
+                posA[0] += sign * force
+                posB[0] -= sign * force
+              }
+            }
           }
         }
-      }
-    }
+      }, { layerCount: layerMap.size })
+    }, { nodeCount: nodes.length, edgeCount: edges.length })
   })
 
   return null
