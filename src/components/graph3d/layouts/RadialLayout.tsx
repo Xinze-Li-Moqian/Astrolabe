@@ -34,6 +34,7 @@ export interface RadialLayoutProps {
 const DEFAULT_RING_SPACING = 8
 const RING_REPULSION_STRENGTH = 50
 const RING_DAMPING = 0.9
+// Physics-enabled readiness uses stable movement over this many frames.
 const RADIAL_STABLE_FRAME_THRESHOLD = 30
 
 /**
@@ -160,6 +161,7 @@ export function RadialLayout({
 }: RadialLayoutProps) {
   const velocities = useRef<Map<string, [number, number, number]>>(new Map())
   const isInitialized = useRef(false)
+  const frameCount = useRef(0)
   const hasReportedReady = useRef(false)
   const stableFrames = useRef(0)
   const nodesByHopRef = useRef<Map<number, string[]>>(new Map())
@@ -191,6 +193,7 @@ export function RadialLayout({
     }
 
     isInitialized.current = true
+    frameCount.current = 0
     stableFrames.current = 0
     hasReportedReady.current = false
 
@@ -208,14 +211,13 @@ export function RadialLayout({
 
   // Run gentle physics to spread nodes within rings
   useFrame((_, delta) => {
+    if (!isInitialized.current) return
+
+    const positions = positionsRef.current
+    if (positions.size === 0) return
+
     profiler.span('layout.radial.step', () => {
-      if (!isInitialized.current) {
-        return
-      }
-
-      const positions = positionsRef.current
-      if (positions.size === 0) return
-
+      frameCount.current++
       if (enablePhysics && stableFrames.current <= RADIAL_STABLE_FRAME_THRESHOLD) {
         const dt = Math.min(delta, 0.05)
         const nodesByHop = nodesByHopRef.current
@@ -282,7 +284,7 @@ export function RadialLayout({
           }
 
           return nextForces
-        }, { hopLevels: nodesByHop.size })
+        })
 
         const totalMovement = profiler.span('layout.radial.integrate', () => {
           let movement = 0
@@ -331,20 +333,26 @@ export function RadialLayout({
         } else {
           stableFrames.current = 0
         }
+      } else if (!enablePhysics) {
+        stableFrames.current = 0
       }
 
-      const ready = !enablePhysics || stableFrames.current > RADIAL_STABLE_FRAME_THRESHOLD
+      const ready = enablePhysics
+        ? stableFrames.current > RADIAL_STABLE_FRAME_THRESHOLD
+        : frameCount.current >= 1
       if (ready && !hasReportedReady.current) {
         hasReportedReady.current = true
         onLayoutReady?.()
       }
 
-      profiler.recordMetrics({
-        nodeCount: nodes.length,
-        edgeCount: edges.length,
-        stableFrames: stableFrames.current,
-      })
-    }, { nodeCount: nodes.length, edgeCount: edges.length })
+      if (profiler.enabled) {
+        profiler.recordMetrics({
+          nodeCount: nodes.length,
+          edgeCount: edges.length,
+          stableFrames: stableFrames.current,
+        })
+      }
+    })
   })
 
   return null

@@ -127,7 +127,7 @@ export function BatchedEdges({
       positionAttr.needsUpdate = true
       colorAttr.needsUpdate = true
       // Note: frustumCulled={false} so no need to computeBoundingSphere()
-    }, { edgeCount: edges.length })
+    })
   })
 
   // Cleanup

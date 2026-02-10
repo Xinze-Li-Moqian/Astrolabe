@@ -72,6 +72,8 @@ const NOTIFY_INTERVAL = 8 // notify listeners every N frames
 const MAX_PENDING_ONE_SHOTS = 1024 // cap to avoid unbounded growth when frames are paused
 
 type FrameListener = () => void
+type SpanMeta = Record<string, number | string>
+type SpanMetaInput = SpanMeta | (() => SpanMeta | undefined)
 
 export class Profiler {
   enabled = false
@@ -174,7 +176,7 @@ export class Profiler {
 
   // ---- Span API ----
 
-  span<T>(name: string, fn: () => T, meta?: Record<string, number | string>): T {
+  span<T>(name: string, fn: () => T, meta?: SpanMetaInput): T {
     if (!this.enabled || !this._currentFrame) return fn()
     const depth = this._spanDepth
     this._spanDepth++
@@ -183,7 +185,8 @@ export class Profiler {
       return fn()
     } finally {
       const dur = performance.now() - start
-      this._currentFrame!.spans.push({ name, start, dur, depth, thread: 'main', meta })
+      const resolvedMeta = typeof meta === 'function' ? meta() : meta
+      this._currentFrame!.spans.push({ name, start, dur, depth, thread: 'main', meta: resolvedMeta })
       this._spanDepth--
     }
   }

@@ -84,6 +84,42 @@ describe('Profiler aggregates', () => {
 })
 
 describe('Profiler metrics and invariants', () => {
+  it('uses span fast path when disabled and does not evaluate lazy meta', () => {
+    const profiler = new Profiler()
+    let fnCalls = 0
+    let metaCalls = 0
+
+    const result = profiler.span('disabled.span', () => {
+      fnCalls++
+      return 42
+    }, () => {
+      metaCalls++
+      return { key: 'value' }
+    })
+
+    expect(result).toBe(42)
+    expect(fnCalls).toBe(1)
+    expect(metaCalls).toBe(0)
+    expect(profiler.getFrames().length).toBe(0)
+  })
+
+  it('caps pending one-shots to avoid unbounded growth', () => {
+    const profiler = new Profiler()
+    profiler.enabled = true
+
+    for (let i = 0; i < 1100; i++) {
+      profiler.recordOneShot(`oneshot.${i}`, 0.01)
+    }
+
+    profiler.beginFrame()
+    profiler.endFrame()
+
+    const last = profiler.getLastFrame()
+    expect(last).not.toBeNull()
+    // MAX_PENDING_ONE_SHOTS in profiler.ts
+    expect(last!.spans.length).toBeLessThanOrEqual(1024)
+  })
+
   it('records metrics as frame snapshots', () => {
     const profiler = new Profiler()
     profiler.enabled = true

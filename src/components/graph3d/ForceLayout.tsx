@@ -839,21 +839,25 @@ export function ForceLayout({
 
     const positions = positionsRef.current
     if (!positions || positions.size === 0 || !running) {
-      profiler.recordMetrics({
-        nodeCount: nodes.length,
-        edgeCount: edges.length,
-        stableFrames: stableFrames.current,
-      })
+      if (profiler.enabled) {
+        profiler.recordMetrics({
+          nodeCount: nodes.length,
+          edgeCount: edges.length,
+          stableFrames: stableFrames.current,
+        })
+      }
       return
     }
 
     // Skip frames after stable to reduce CPU usage
     if (!draggingNodeId && stableFrames.current > 90) {
-      profiler.recordMetrics({
-        nodeCount: nodes.length,
-        edgeCount: edges.length,
-        stableFrames: stableFrames.current,
-      })
+      if (profiler.enabled) {
+        profiler.recordMetrics({
+          nodeCount: nodes.length,
+          edgeCount: edges.length,
+          stableFrames: stableFrames.current,
+        })
+      }
       return
     }
 
@@ -1373,11 +1377,13 @@ export function ForceLayout({
       }
     }
 
-    profiler.recordMetrics({
-      nodeCount: nodes.length,
-      edgeCount: edges.length,
-      stableFrames: stableFrames.current,
-    })
+    if (profiler.enabled) {
+      profiler.recordMetrics({
+        nodeCount: nodes.length,
+        edgeCount: edges.length,
+        stableFrames: stableFrames.current,
+      })
+    }
   })
 
   return null

@@ -10,6 +10,12 @@ import { useFrame } from '@react-three/fiber'
 import type { AstrolabeNode, AstrolabeEdge } from '@/types/graph'
 import { profiler } from '@/lib/profiler'
 
+// Readiness semantics:
+// - physics disabled: ready after a short settling delay
+// - physics enabled: ready after N stable frames
+const HIERARCHICAL_READY_FRAME_DELAY = 3
+const HIERARCHICAL_STABLE_FRAME_THRESHOLD = 30
+
 // ============================================
 // Types
 // ============================================
@@ -167,6 +173,7 @@ export function HierarchicalLayout({
   onLayoutReady,
 }: HierarchicalLayoutProps) {
   const initialized = useRef(false)
+  const frameCount = useRef(0)
   const stableFrames = useRef(0)
   const hasReportedReady = useRef(false)
   const layerMapRef = useRef<Map<number, string[]>>(new Map())
@@ -191,6 +198,7 @@ export function HierarchicalLayout({
     }
 
     initialized.current = true
+    frameCount.current = 0
     stableFrames.current = 0
     hasReportedReady.current = false
     profiler.recordOneShot('layout.hierarchical.init', performance.now() - t0, {
@@ -203,9 +211,10 @@ export function HierarchicalLayout({
 
   // Optional physics for gentle within-layer repulsion
   useFrame(() => {
-    profiler.span('layout.hierarchical.step', () => {
-      if (!initialized.current) return
+    if (!initialized.current) return
 
+    profiler.span('layout.hierarchical.step', () => {
+      frameCount.current++
       if (enablePhysics) {
         // Gentle horizontal repulsion within layers.
         const layerMap = layerMapRef.current
@@ -246,23 +255,29 @@ export function HierarchicalLayout({
           }
 
           return adjustment
-        }, { layerCount: layerMap.size })
+        })
 
         stableFrames.current = totalAdjustment < 0.01 ? stableFrames.current + 1 : 0
+      } else {
+        stableFrames.current = 0
       }
 
-      const ready = !enablePhysics || stableFrames.current > 30
+      const ready = enablePhysics
+        ? stableFrames.current > HIERARCHICAL_STABLE_FRAME_THRESHOLD
+        : frameCount.current >= HIERARCHICAL_READY_FRAME_DELAY
       if (ready && !hasReportedReady.current) {
         hasReportedReady.current = true
         onLayoutReady?.()
       }
 
-      profiler.recordMetrics({
-        nodeCount: nodes.length,
-        edgeCount: edges.length,
-        stableFrames: stableFrames.current,
-      })
-    }, { nodeCount: nodes.length, edgeCount: edges.length })
+      if (profiler.enabled) {
+        profiler.recordMetrics({
+          nodeCount: nodes.length,
+          edgeCount: edges.length,
+          stableFrames: stableFrames.current,
+        })
+      }
+    })
   })
 
   return null
