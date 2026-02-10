@@ -83,3 +83,93 @@ describe('Profiler aggregates', () => {
   })
 })
 
+describe('Profiler metrics and invariants', () => {
+  it('records metrics as frame snapshots', () => {
+    const profiler = new Profiler()
+    profiler.enabled = true
+
+    profiler.beginFrame()
+    profiler.recordMetrics({
+      nodeCount: 12,
+      edgeCount: 34,
+      stableFrames: 5,
+      rendererStats: {
+        drawCalls: 7,
+        triangles: 1234,
+        geometries: 8,
+        textures: 9,
+      },
+    })
+    profiler.endFrame()
+
+    const latest = profiler.getLatestMetrics()
+    expect(latest.nodeCount).toBe(12)
+    expect(latest.edgeCount).toBe(34)
+    expect(latest.stableFrames).toBe(5)
+    expect(latest.rendererStats.drawCalls).toBe(7)
+
+    const lastFrame = profiler.getLastFrame()
+    expect(lastFrame).not.toBeNull()
+    expect(lastFrame!.metrics.nodeCount).toBe(12)
+    expect(lastFrame!.metrics.rendererStats.triangles).toBe(1234)
+  })
+
+  it('keeps deterministic layout math identical with profiling enabled/disabled', () => {
+    const runDeterministicStep = (enabled: boolean) => {
+      const profiler = new Profiler()
+      profiler.enabled = enabled
+
+      const positions = new Map<string, [number, number, number]>([
+        ['a', [0, 0, 0]],
+        ['b', [10, 0, 0]],
+      ])
+      const velocities = new Map<string, [number, number, number]>([
+        ['a', [0, 0, 0]],
+        ['b', [0, 0, 0]],
+      ])
+      const dt = 0.016
+
+      profiler.beginFrame()
+      profiler.span('layout.test.step', () => {
+        const forces = profiler.span('layout.test.forces', () => {
+          const next = new Map<string, [number, number, number]>([
+            ['a', [0, 0, 0]],
+            ['b', [0, 0, 0]],
+          ])
+          const pA = positions.get('a')!
+          const pB = positions.get('b')!
+          const dx = pB[0] - pA[0]
+          const dist = Math.max(0.1, Math.abs(dx))
+          const springForce = (dist - 8) * 0.5
+          next.get('a')![0] += springForce
+          next.get('b')![0] -= springForce
+          return next
+        })
+
+        profiler.span('layout.test.integrate', () => {
+          for (const id of ['a', 'b']) {
+            const vel = velocities.get(id)!
+            const force = forces.get(id)!
+            const pos = positions.get(id)!
+            vel[0] = (vel[0] + force[0] * dt) * 0.8
+            pos[0] += vel[0] * dt
+          }
+        })
+
+        profiler.recordMetrics({
+          nodeCount: positions.size,
+          edgeCount: 1,
+          stableFrames: 0,
+        })
+      })
+      profiler.endFrame()
+
+      return {
+        positions: Array.from(positions.entries()),
+        velocities: Array.from(velocities.entries()),
+      }
+    }
+
+    expect(runDeterministicStep(true)).toEqual(runDeterministicStep(false))
+  })
+})

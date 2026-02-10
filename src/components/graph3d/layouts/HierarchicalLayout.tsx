@@ -167,7 +167,9 @@ export function HierarchicalLayout({
   onLayoutReady,
 }: HierarchicalLayoutProps) {
   const initialized = useRef(false)
-  const frameCount = useRef(0)
+  const stableFrames = useRef(0)
+  const hasReportedReady = useRef(false)
+  const layerMapRef = useRef<Map<number, string[]>>(new Map())
 
   // Initialize positions on mount or when data changes
   useEffect(() => {
@@ -189,7 +191,8 @@ export function HierarchicalLayout({
     }
 
     initialized.current = true
-    frameCount.current = 0
+    stableFrames.current = 0
+    hasReportedReady.current = false
     profiler.recordOneShot('layout.hierarchical.init', performance.now() - t0, {
       nodeCount: nodes.length,
       edgeCount: edges.length,
@@ -201,59 +204,64 @@ export function HierarchicalLayout({
   // Optional physics for gentle within-layer repulsion
   useFrame(() => {
     profiler.span('layout.hierarchical.step', () => {
-      if (profiler.enabled) {
-        profiler.nodeCount = nodes.length
-        profiler.edgeCount = edges.length
-      }
-
       if (!initialized.current) return
 
-      frameCount.current++
+      if (enablePhysics) {
+        // Gentle horizontal repulsion within layers.
+        const layerMap = layerMapRef.current
+        layerMap.clear()
+        for (const node of nodes) {
+          const pos = positionsRef.current.get(node.id)
+          if (!pos) continue
+          const layerY = Math.round(pos[1] / layerSpacing) * layerSpacing
+          if (!layerMap.has(layerY)) layerMap.set(layerY, [])
+          layerMap.get(layerY)!.push(node.id)
+        }
 
-      // Signal ready after a few frames
-      if (frameCount.current === 3 && onLayoutReady) {
-        onLayoutReady()
-      }
+        const totalAdjustment = profiler.span('layout.hierarchical.repulsion', () => {
+          let adjustment = 0
+          const repulsionStrength = 0.1
+          const minDistance = nodeSpacing * 0.8
 
-      if (!enablePhysics) return
+          for (const nodeIds of layerMap.values()) {
+            if (nodeIds.length < 2) continue
 
-      // Gentle horizontal repulsion within layers
-      // Group nodes by their current Y position (layer)
-      const layerMap = new Map<number, string[]>()
-      for (const node of nodes) {
-        const pos = positionsRef.current.get(node.id)
-        if (!pos) continue
-        const layerY = Math.round(pos[1] / layerSpacing) * layerSpacing
-        if (!layerMap.has(layerY)) layerMap.set(layerY, [])
-        layerMap.get(layerY)!.push(node.id)
-      }
+            for (let i = 0; i < nodeIds.length; i++) {
+              for (let j = i + 1; j < nodeIds.length; j++) {
+                const posA = positionsRef.current.get(nodeIds[i])!
+                const posB = positionsRef.current.get(nodeIds[j])!
 
-      profiler.span('layout.hierarchical.repulsion', () => {
-        // Apply repulsion within each layer
-        const repulsionStrength = 0.1
-        const minDistance = nodeSpacing * 0.8
+                const dx = posA[0] - posB[0]
+                const distance = Math.abs(dx)
 
-        for (const nodeIds of layerMap.values()) {
-          if (nodeIds.length < 2) continue
-
-          for (let i = 0; i < nodeIds.length; i++) {
-            for (let j = i + 1; j < nodeIds.length; j++) {
-              const posA = positionsRef.current.get(nodeIds[i])!
-              const posB = positionsRef.current.get(nodeIds[j])!
-
-              const dx = posA[0] - posB[0]
-              const distance = Math.abs(dx)
-
-              if (distance < minDistance && distance > 0.01) {
-                const force = (minDistance - distance) * repulsionStrength
-                const sign = dx > 0 ? 1 : -1
-                posA[0] += sign * force
-                posB[0] -= sign * force
+                if (distance < minDistance && distance > 0.01) {
+                  const force = (minDistance - distance) * repulsionStrength
+                  const sign = dx > 0 ? 1 : -1
+                  posA[0] += sign * force
+                  posB[0] -= sign * force
+                  adjustment += force * 2
+                }
               }
             }
           }
-        }
-      }, { layerCount: layerMap.size })
+
+          return adjustment
+        }, { layerCount: layerMap.size })
+
+        stableFrames.current = totalAdjustment < 0.01 ? stableFrames.current + 1 : 0
+      }
+
+      const ready = !enablePhysics || stableFrames.current > 30
+      if (ready && !hasReportedReady.current) {
+        hasReportedReady.current = true
+        onLayoutReady?.()
+      }
+
+      profiler.recordMetrics({
+        nodeCount: nodes.length,
+        edgeCount: edges.length,
+        stableFrames: stableFrames.current,
+      })
     }, { nodeCount: nodes.length, edgeCount: edges.length })
   })
 

@@ -34,6 +34,7 @@ export interface RadialLayoutProps {
 const DEFAULT_RING_SPACING = 8
 const RING_REPULSION_STRENGTH = 50
 const RING_DAMPING = 0.9
+const RADIAL_STABLE_FRAME_THRESHOLD = 30
 
 /**
  * Build adjacency list for bidirectional traversal
@@ -161,6 +162,8 @@ export function RadialLayout({
   const isInitialized = useRef(false)
   const hasReportedReady = useRef(false)
   const stableFrames = useRef(0)
+  const nodesByHopRef = useRef<Map<number, string[]>>(new Map())
+  const forcesRef = useRef<Map<string, [number, number, number]>>(new Map())
 
   // Calculate hop distances when focus or graph changes
   const hopDistances = useMemo(() => {
@@ -206,153 +209,141 @@ export function RadialLayout({
   // Run gentle physics to spread nodes within rings
   useFrame((_, delta) => {
     profiler.span('layout.radial.step', () => {
-      if (profiler.enabled) {
-        profiler.nodeCount = nodes.length
-        profiler.edgeCount = edges.length
-        profiler.stableFrames = stableFrames.current
-      }
-
-      if (!isInitialized.current || !enablePhysics) {
-        // Report ready immediately if physics disabled
-        if (!hasReportedReady.current && isInitialized.current) {
-          hasReportedReady.current = true
-          onLayoutReady?.()
-        }
+      if (!isInitialized.current) {
         return
       }
 
       const positions = positionsRef.current
       if (positions.size === 0) return
 
-      // Skip if already stable
-      if (stableFrames.current > 30) {
-        if (!hasReportedReady.current) {
-          hasReportedReady.current = true
-          onLayoutReady?.()
-        }
-        return
-      }
-
-      const dt = Math.min(delta, 0.05)
-      const nodesByHop = new Map<number, string[]>()
-      for (const node of nodes) {
-        const hop = hopDistances.get(node.id) ?? -1
-        if (hop < 0) continue
-        if (!nodesByHop.has(hop)) nodesByHop.set(hop, [])
-        nodesByHop.get(hop)!.push(node.id)
-      }
-
-      const forces = profiler.span('layout.radial.forces', () => {
-        const nextForces = new Map<string, [number, number, number]>()
-        // Initialize forces
+      if (enablePhysics && stableFrames.current <= RADIAL_STABLE_FRAME_THRESHOLD) {
+        const dt = Math.min(delta, 0.05)
+        const nodesByHop = nodesByHopRef.current
+        nodesByHop.clear()
         for (const node of nodes) {
-          nextForces.set(node.id, [0, 0, 0])
+          const hop = hopDistances.get(node.id) ?? -1
+          if (hop < 0) continue
+          if (!nodesByHop.has(hop)) nodesByHop.set(hop, [])
+          nodesByHop.get(hop)!.push(node.id)
         }
 
-        // Apply repulsion between nodes at the same hop level
-        for (const [hop, nodeIds] of nodesByHop) {
-          if (hop === 0) continue // Don't move focus node
-
-          const radius = hop * ringSpacing
-
-          for (let i = 0; i < nodeIds.length; i++) {
-            for (let j = i + 1; j < nodeIds.length; j++) {
-              const p1 = positions.get(nodeIds[i])
-              const p2 = positions.get(nodeIds[j])
-              if (!p1 || !p2) continue
-
-              const dx = p2[0] - p1[0]
-              const dy = p2[1] - p1[1]
-              const dz = p2[2] - p1[2]
-              const distSq = dx * dx + dy * dy + dz * dz
-              const dist = Math.sqrt(distSq) || 0.1
-
-              // Repulsion force
-              const force = RING_REPULSION_STRENGTH / (dist * dist)
-              const fx = (dx / dist) * force
-              const fy = (dy / dist) * force
-              const fz = (dz / dist) * force
-
-              const f1 = nextForces.get(nodeIds[i])!
-              const f2 = nextForces.get(nodeIds[j])!
-              f1[0] -= fx; f1[1] -= fy; f1[2] -= fz
-              f2[0] += fx; f2[1] += fy; f2[2] += fz
-            }
-
-            // Constrain to ring radius (spring force toward ring)
-            const nodeId = nodeIds[i]
-            const pos = positions.get(nodeId)
-            if (!pos) continue
-
-            const currentRadius = Math.sqrt(pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2])
-            if (currentRadius > 0.1) {
-              const radiusError = radius - currentRadius
-              const constraintForce = radiusError * 0.5
-
-              const f = nextForces.get(nodeId)!
-              f[0] += (pos[0] / currentRadius) * constraintForce
-              f[1] += (pos[1] / currentRadius) * constraintForce
-              f[2] += (pos[2] / currentRadius) * constraintForce
-            }
-          }
-        }
-
-        return nextForces
-      }, { hopLevels: nodesByHop.size })
-
-      // Apply forces with damping
-      const totalMovement = profiler.span('layout.radial.integrate', () => {
-        let movement = 0
-        const maxVelocity = 5
-
-        for (const node of nodes) {
-          const hop = hopDistances.get(node.id)
-          if (hop === 0) continue // Don't move focus node
-
-          const pos = positions.get(node.id)
-          const vel = velocities.current.get(node.id) || [0, 0, 0]
-          const force = forces.get(node.id)
-          if (!pos || !force) continue
-
-          // Update velocity
-          vel[0] = (vel[0] + force[0] * dt) * RING_DAMPING
-          vel[1] = (vel[1] + force[1] * dt) * RING_DAMPING
-          vel[2] = (vel[2] + force[2] * dt) * RING_DAMPING
-
-          // Limit velocity
-          const speed = Math.sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2])
-          if (speed > maxVelocity) {
-            vel[0] *= maxVelocity / speed
-            vel[1] *= maxVelocity / speed
-            vel[2] *= maxVelocity / speed
+        const forces = profiler.span('layout.radial.forces', () => {
+          const nextForces = forcesRef.current
+          nextForces.clear()
+          for (const node of nodes) {
+            nextForces.set(node.id, [0, 0, 0])
           }
 
-          velocities.current.set(node.id, vel)
+          for (const [hop, nodeIds] of nodesByHop) {
+            if (hop === 0) continue // Don't move focus node
 
-          // Update position
-          const newPos: [number, number, number] = [
-            pos[0] + vel[0] * dt,
-            pos[1] + vel[1] * dt,
-            pos[2] + vel[2] * dt,
-          ]
-          positions.set(node.id, newPos)
+            const radius = hop * ringSpacing
 
-          movement += Math.abs(vel[0]) + Math.abs(vel[1]) + Math.abs(vel[2])
+            for (let i = 0; i < nodeIds.length; i++) {
+              for (let j = i + 1; j < nodeIds.length; j++) {
+                const p1 = positions.get(nodeIds[i])
+                const p2 = positions.get(nodeIds[j])
+                if (!p1 || !p2) continue
+
+                const dx = p2[0] - p1[0]
+                const dy = p2[1] - p1[1]
+                const dz = p2[2] - p1[2]
+                const distSq = dx * dx + dy * dy + dz * dz
+                const dist = Math.sqrt(distSq) || 0.1
+
+                // Repulsion force
+                const force = RING_REPULSION_STRENGTH / (dist * dist)
+                const fx = (dx / dist) * force
+                const fy = (dy / dist) * force
+                const fz = (dz / dist) * force
+
+                const f1 = nextForces.get(nodeIds[i])!
+                const f2 = nextForces.get(nodeIds[j])!
+                f1[0] -= fx; f1[1] -= fy; f1[2] -= fz
+                f2[0] += fx; f2[1] += fy; f2[2] += fz
+              }
+
+              // Constrain to ring radius (spring force toward ring)
+              const nodeId = nodeIds[i]
+              const pos = positions.get(nodeId)
+              if (!pos) continue
+
+              const currentRadius = Math.sqrt(pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2])
+              if (currentRadius > 0.1) {
+                const radiusError = radius - currentRadius
+                const constraintForce = radiusError * 0.5
+
+                const f = nextForces.get(nodeId)!
+                f[0] += (pos[0] / currentRadius) * constraintForce
+                f[1] += (pos[1] / currentRadius) * constraintForce
+                f[2] += (pos[2] / currentRadius) * constraintForce
+              }
+            }
+          }
+
+          return nextForces
+        }, { hopLevels: nodesByHop.size })
+
+        const totalMovement = profiler.span('layout.radial.integrate', () => {
+          let movement = 0
+          const maxVelocity = 5
+
+          for (const node of nodes) {
+            const hop = hopDistances.get(node.id)
+            if (hop === 0) continue // Don't move focus node
+
+            const pos = positions.get(node.id)
+            const vel = velocities.current.get(node.id) || [0, 0, 0]
+            const force = forces.get(node.id)
+            if (!pos || !force) continue
+
+            // Update velocity
+            vel[0] = (vel[0] + force[0] * dt) * RING_DAMPING
+            vel[1] = (vel[1] + force[1] * dt) * RING_DAMPING
+            vel[2] = (vel[2] + force[2] * dt) * RING_DAMPING
+
+            // Limit velocity
+            const speed = Math.sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2])
+            if (speed > maxVelocity) {
+              vel[0] *= maxVelocity / speed
+              vel[1] *= maxVelocity / speed
+              vel[2] *= maxVelocity / speed
+            }
+
+            velocities.current.set(node.id, vel)
+
+            // Update position
+            const newPos: [number, number, number] = [
+              pos[0] + vel[0] * dt,
+              pos[1] + vel[1] * dt,
+              pos[2] + vel[2] * dt,
+            ]
+            positions.set(node.id, newPos)
+
+            movement += Math.abs(vel[0]) + Math.abs(vel[1]) + Math.abs(vel[2])
+          }
+
+          return movement
+        })
+
+        if (totalMovement < 0.1) {
+          stableFrames.current++
+        } else {
+          stableFrames.current = 0
         }
+      }
 
-        return movement
+      const ready = !enablePhysics || stableFrames.current > RADIAL_STABLE_FRAME_THRESHOLD
+      if (ready && !hasReportedReady.current) {
+        hasReportedReady.current = true
+        onLayoutReady?.()
+      }
+
+      profiler.recordMetrics({
+        nodeCount: nodes.length,
+        edgeCount: edges.length,
+        stableFrames: stableFrames.current,
       })
-
-      // Check for stability
-      if (totalMovement < 0.1) {
-        stableFrames.current++
-      } else {
-        stableFrames.current = 0
-      }
-
-      if (profiler.enabled) {
-        profiler.stableFrames = stableFrames.current
-      }
     }, { nodeCount: nodes.length, edgeCount: edges.length })
   })
 

@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { isDevMode } from '@/lib/devMode'
-import { profiler, type FrameTrace, type SpanAggregate } from '@/lib/profiler'
+import { profiler, type FrameTrace, type SpanAggregate, type ProfilerMetrics } from '@/lib/profiler'
 
 // ============================================
 // Constants
@@ -29,13 +29,13 @@ const SPAN_COLORS: Record<string, string> = {
   'layout.hierarchical.step': '#8b5cf6', // violet-500
   'layout.hierarchical.repulsion': '#7c3aed', // violet-600
   'edges.update': '#a855f7',     // purple-500
-  'worker.step': '#f59e0b',      // amber-500
+  'worker.layout.total': '#f59e0b',      // amber-500
   'worker.transfer.in': '#f59e0b', // amber-500
-  'worker.compute.repulsion': '#f97316', // orange-500
-  'worker.compute.springs': '#fb923c', // orange-400
-  'worker.compute.center': '#facc15', // yellow-400
-  'worker.compute.clustering': '#eab308', // yellow-500
-  'worker.compute.integrate': '#84cc16', // lime-500
+  'worker.layout.repulsion': '#f97316', // orange-500
+  'worker.layout.springs': '#fb923c', // orange-400
+  'worker.layout.center': '#facc15', // yellow-400
+  'worker.layout.clustering': '#eab308', // yellow-500
+  'worker.layout.integrate': '#84cc16', // lime-500
   'worker.serialize.positions': '#d97706', // amber-600
   'worker.transfer.out': '#b45309', // amber-700
   'worker.deserialize.positions': '#c2410c', // orange-700
@@ -358,8 +358,8 @@ function HotspotsTab({ aggregates }: { aggregates: SpanAggregate[] }) {
 // Renderer Tab
 // ============================================
 
-function RendererTab() {
-  const stats = profiler.rendererStats
+function RendererTab({ metrics }: { metrics: ProfilerMetrics }) {
+  const stats = metrics.rendererStats
 
   return (
     <div className="space-y-0.5 text-white/50">
@@ -380,12 +380,12 @@ function RendererTab() {
         <span className="text-white/70">{stats.textures}</span>
       </div>
       <div className="mt-1.5 pt-1.5 border-t border-white/10 flex justify-between text-white/40">
-        <span>{profiler.nodeCount} nodes</span>
-        <span>{profiler.edgeCount} edges</span>
+        <span>{metrics.nodeCount} nodes</span>
+        <span>{metrics.edgeCount} edges</span>
       </div>
-      {profiler.stableFrames > 60 && (
+      {metrics.stableFrames > 60 && (
         <div className="text-green-400/70 text-[9px] text-center mt-1">
-          STABLE ({profiler.stableFrames} frames)
+          STABLE ({metrics.stableFrames} frames)
         </div>
       )}
     </div>
@@ -426,6 +426,10 @@ export default function ProfilerOverlay({ className = '' }: ProfilerOverlayProps
   // Derive data from profiler (re-computed on tick)
   const frames = useMemo(() => profiler.getFrames(), [tick])
   const lastFrame = frames.length > 0 ? frames[frames.length - 1] : null
+  const metrics = useMemo(
+    () => lastFrame?.metrics ?? profiler.getLatestMetrics(),
+    [lastFrame, tick]
+  )
   const fps = lastFrame && lastFrame.dur > 0 ? Math.round(1000 / lastFrame.dur) : 0
   const aggregates = useMemo(() => profiler.getAggregates(120), [tick])
 
@@ -477,7 +481,7 @@ export default function ProfilerOverlay({ className = '' }: ProfilerOverlayProps
           <Sparkline frames={sparklineFrames} width={expanded ? 220 : 140} height={20} />
 
           <div className="flex flex-col text-[9px] text-white/40 text-right min-w-[54px]">
-            <span>{profiler.nodeCount}n/{profiler.edgeCount}e</span>
+            <span>{metrics.nodeCount}n/{metrics.edgeCount}e</span>
             <span>{topSpanMs > 0 ? `phys ${formatMs(topSpanMs)}ms` : '-'}</span>
           </div>
         </div>
@@ -533,7 +537,7 @@ export default function ProfilerOverlay({ className = '' }: ProfilerOverlayProps
               <HotspotsTab aggregates={aggregates} />
             )}
             {activeTab === 'renderer' && (
-              <RendererTab />
+              <RendererTab metrics={metrics} />
             )}
           </div>
 

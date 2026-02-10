@@ -56,14 +56,15 @@ if (typeof window !== 'undefined') {
     },
     getMetrics: () => {
       const last = profiler.getLastFrame()
+      const metrics = profiler.getLatestMetrics()
       if (!last) return null
       return {
         fps: last.dur > 0 ? Math.round(1000 / last.dur) : 0,
         frameTime: last.dur,
-        nodeCount: profiler.nodeCount,
-        edgeCount: profiler.edgeCount,
-        stableFrames: profiler.stableFrames,
-        ...profiler.rendererStats,
+        nodeCount: metrics.nodeCount,
+        edgeCount: metrics.edgeCount,
+        stableFrames: metrics.stableFrames,
+        ...metrics.rendererStats,
       }
     },
     getTraces: (count?: number) => profiler.getFrames(count),

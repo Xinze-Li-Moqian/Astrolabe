@@ -21,11 +21,33 @@ export interface SpanEvent {
   meta?: Record<string, number | string>
 }
 
+export interface RendererStats {
+  drawCalls: number
+  triangles: number
+  geometries: number
+  textures: number
+}
+
+export interface ProfilerMetrics {
+  nodeCount: number
+  edgeCount: number
+  stableFrames: number
+  rendererStats: RendererStats
+}
+
+export interface ProfilerMetricsUpdate {
+  nodeCount?: number
+  edgeCount?: number
+  stableFrames?: number
+  rendererStats?: Partial<RendererStats>
+}
+
 export interface FrameTrace {
   frameId: number
   start: number       // performance.now() at frame begin
   dur: number         // total frame duration
   spans: SpanEvent[]
+  metrics: ProfilerMetrics
 }
 
 export interface SpanAggregate {
@@ -66,14 +88,56 @@ export class Profiler {
   // One-shot spans (from useMemo etc, flushed into next frame)
   private _pendingOneShots: SpanEvent[] = []
 
-  // Metadata (set by instrumented code each frame)
-  rendererStats = { drawCalls: 0, triangles: 0, geometries: 0, textures: 0 }
-  nodeCount = 0
-  edgeCount = 0
-  stableFrames = 0
+  // Latest metrics snapshot (observational, populated by recordMetrics)
+  private _latestMetrics: ProfilerMetrics = {
+    nodeCount: 0,
+    edgeCount: 0,
+    stableFrames: 0,
+    rendererStats: { drawCalls: 0, triangles: 0, geometries: 0, textures: 0 },
+  }
 
   // Listeners
   private _listeners = new Set<FrameListener>()
+
+  private _cloneMetrics(metrics: ProfilerMetrics): ProfilerMetrics {
+    return {
+      nodeCount: metrics.nodeCount,
+      edgeCount: metrics.edgeCount,
+      stableFrames: metrics.stableFrames,
+      rendererStats: {
+        drawCalls: metrics.rendererStats.drawCalls,
+        triangles: metrics.rendererStats.triangles,
+        geometries: metrics.rendererStats.geometries,
+        textures: metrics.rendererStats.textures,
+      },
+    }
+  }
+
+  // ---- Metrics API ----
+
+  recordMetrics(update: ProfilerMetricsUpdate): void {
+    if (!this.enabled) return
+
+    if (update.nodeCount !== undefined) this._latestMetrics.nodeCount = update.nodeCount
+    if (update.edgeCount !== undefined) this._latestMetrics.edgeCount = update.edgeCount
+    if (update.stableFrames !== undefined) this._latestMetrics.stableFrames = update.stableFrames
+
+    const renderer = update.rendererStats
+    if (renderer) {
+      if (renderer.drawCalls !== undefined) this._latestMetrics.rendererStats.drawCalls = renderer.drawCalls
+      if (renderer.triangles !== undefined) this._latestMetrics.rendererStats.triangles = renderer.triangles
+      if (renderer.geometries !== undefined) this._latestMetrics.rendererStats.geometries = renderer.geometries
+      if (renderer.textures !== undefined) this._latestMetrics.rendererStats.textures = renderer.textures
+    }
+
+    if (this._currentFrame) {
+      this._currentFrame.metrics = this._cloneMetrics(this._latestMetrics)
+    }
+  }
+
+  getLatestMetrics(): ProfilerMetrics {
+    return this._cloneMetrics(this._latestMetrics)
+  }
 
   // ---- Frame lifecycle ----
 
@@ -85,6 +149,7 @@ export class Profiler {
       start: now,
       dur: 0,
       spans: [],
+      metrics: this._cloneMetrics(this._latestMetrics),
     }
     this._spanDepth = 0
 

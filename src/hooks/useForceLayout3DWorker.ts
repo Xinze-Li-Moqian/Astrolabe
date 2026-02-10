@@ -169,18 +169,18 @@ export function useForceLayout3DWorker(
               if (dur > 0.01) profiler.pushWorkerSpan(name, dur, meta)
             }
             pushPhase('worker.transfer.in', phaseDurations.transferIn)
-            pushPhase('worker.compute.repulsion', phaseDurations.repulsion, { nodeCount: posMap.size })
-            pushPhase('worker.compute.springs', phaseDurations.springs)
-            pushPhase('worker.compute.center', phaseDurations.center)
-            pushPhase('worker.compute.clustering', phaseDurations.clustering)
-            pushPhase('worker.compute.integrate', phaseDurations.integrate, { nodeCount: posMap.size })
+            pushPhase('worker.layout.repulsion', phaseDurations.repulsion, { nodeCount: posMap.size })
+            pushPhase('worker.layout.springs', phaseDurations.springs)
+            pushPhase('worker.layout.center', phaseDurations.center)
+            pushPhase('worker.layout.clustering', phaseDurations.clustering)
+            pushPhase('worker.layout.integrate', phaseDurations.integrate, { nodeCount: posMap.size })
             pushPhase('worker.serialize.positions', phaseDurations.serialize, { nodeCount: posMap.size })
             if (typeof workerSentAt === 'number') {
               const transferOut = Math.max(0, performance.now() - workerSentAt)
               pushPhase('worker.transfer.out', transferOut)
             }
           } else if (stepDur !== undefined) {
-            profiler.pushWorkerSpan('worker.step', stepDur, { nodeCount: posMap.size })
+            profiler.pushWorkerSpan('worker.layout.total', stepDur, { nodeCount: posMap.size })
           }
 
           if (decodeDur > 0.01) {

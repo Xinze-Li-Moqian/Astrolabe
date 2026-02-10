@@ -32,12 +32,14 @@ export function FrameProfilerHooks() {
 
     if (profiler.enabled) {
       const info = gl.info
-      profiler.rendererStats = {
-        drawCalls: info.render.calls,
-        triangles: info.render.triangles,
-        geometries: info.memory.geometries,
-        textures: info.memory.textures,
-      }
+      profiler.recordMetrics({
+        rendererStats: {
+          drawCalls: info.render.calls,
+          triangles: info.render.triangles,
+          geometries: info.memory.geometries,
+          textures: info.memory.textures,
+        },
+      })
     }
 
     profiler.endFrame()

@@ -453,6 +453,8 @@ export function ForceLayout({
 }: ForceLayoutProps) {
   // Access positionsRef.current directly in callbacks to always get latest Map
   const velocities = useRef<Map<string, [number, number, number]>>(new Map())
+  const forcesRef = useRef<Map<string, [number, number, number]>>(new Map())
+  const nextPositionsRef = useRef<Map<string, [number, number, number]>>(new Map())
   const { camera, raycaster, gl, pointer } = useThree()
   const dragPlane = useRef(new THREE.Plane())
   const dragStartPos = useRef<[number, number, number] | null>(null)
@@ -837,20 +839,21 @@ export function ForceLayout({
 
     const positions = positionsRef.current
     if (!positions || positions.size === 0 || !running) {
-      if (profiler.enabled) {
-        profiler.nodeCount = nodes.length
-        profiler.edgeCount = edges.length
-      }
+      profiler.recordMetrics({
+        nodeCount: nodes.length,
+        edgeCount: edges.length,
+        stableFrames: stableFrames.current,
+      })
       return
     }
 
     // Skip frames after stable to reduce CPU usage
     if (!draggingNodeId && stableFrames.current > 90) {
-      if (profiler.enabled) {
-        profiler.nodeCount = nodes.length
-        profiler.edgeCount = edges.length
-        profiler.stableFrames = stableFrames.current
-      }
+      profiler.recordMetrics({
+        nodeCount: nodes.length,
+        edgeCount: edges.length,
+        stableFrames: stableFrames.current,
+      })
       return
     }
 
@@ -892,7 +895,11 @@ export function ForceLayout({
 
     // Physics simulation
     const dt = Math.min(delta, 0.05)
-    const newPositions = new Map(positions)
+    const newPositions = nextPositionsRef.current
+    newPositions.clear()
+    for (const [id, pos] of positions.entries()) {
+      newPositions.set(id, pos)
+    }
 
     // Apply dragging position
     if (draggedNodePos.current) {
@@ -900,7 +907,8 @@ export function ForceLayout({
     }
 
     // Calculate forces
-    const forces = new Map<string, [number, number, number]>()
+    const forces = forcesRef.current
+    forces.clear()
     nodes.forEach((n) => forces.set(n.id, [0, 0, 0]))
 
     // Repulsion using Barnes-Hut O(n log n) approximation
@@ -1365,19 +1373,11 @@ export function ForceLayout({
       }
     }
 
-    // Profiler metadata
-    if (profiler.enabled) {
-      profiler.nodeCount = nodes.length
-      profiler.edgeCount = edges.length
-      profiler.stableFrames = stableFrames.current
-      const info = gl.info
-      profiler.rendererStats = {
-        drawCalls: info.render.calls,
-        triangles: info.render.triangles,
-        geometries: info.memory.geometries,
-        textures: info.memory.textures,
-      }
-    }
+    profiler.recordMetrics({
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      stableFrames: stableFrames.current,
+    })
   })
 
   return null
