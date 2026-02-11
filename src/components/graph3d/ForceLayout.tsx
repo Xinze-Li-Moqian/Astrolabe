@@ -14,15 +14,7 @@ import { useEffect, useRef, useMemo, useCallback } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { Node, Edge } from '@/lib/store'
-import {
-  isDevMode,
-  recordFrameStart,
-  recordPhysicsTime,
-  recordFrameEnd,
-  updateNodeEdgeCount,
-  updateStableFrames,
-  updateRendererInfo,
-} from '@/lib/devMode'
+import { profiler } from '@/lib/profiler'
 import {
   groupNodesByNamespace,
   computeClusterCentroids,
@@ -461,6 +453,8 @@ export function ForceLayout({
 }: ForceLayoutProps) {
   // Access positionsRef.current directly in callbacks to always get latest Map
   const velocities = useRef<Map<string, [number, number, number]>>(new Map())
+  const forcesRef = useRef<Map<string, [number, number, number]>>(new Map())
+  const nextPositionsRef = useRef<Map<string, [number, number, number]>>(new Map())
   const { camera, raycaster, gl, pointer } = useThree()
   const dragPlane = useRef(new THREE.Plane())
   const dragStartPos = useRef<[number, number, number] | null>(null)
@@ -839,29 +833,30 @@ export function ForceLayout({
   }, [draggingNodeId, setDraggingNodeId, gl.domElement])
 
   useFrame((_, delta) => {
-    const devMode = isDevMode()
-    const frameStart = devMode ? recordFrameStart() : 0
-
     if (pendingWarmup.current && positionsRef.current.size > 0) {
       runWarmupIfNeeded('pending')
     }
 
     const positions = positionsRef.current
     if (!positions || positions.size === 0 || !running) {
-      if (devMode) {
-        // Still update node/edge count even when not simulating
-        updateNodeEdgeCount(nodes.length, edges.length)
-        recordFrameEnd(frameStart)
+      if (profiler.enabled) {
+        profiler.recordMetrics({
+          nodeCount: nodes.length,
+          edgeCount: edges.length,
+          stableFrames: stableFrames.current,
+        })
       }
       return
     }
 
     // Skip frames after stable to reduce CPU usage
     if (!draggingNodeId && stableFrames.current > 90) {
-      if (devMode) {
-        updateNodeEdgeCount(nodes.length, edges.length)
-        updateStableFrames(stableFrames.current)
-        recordFrameEnd(frameStart)
+      if (profiler.enabled) {
+        profiler.recordMetrics({
+          nodeCount: nodes.length,
+          edgeCount: edges.length,
+          stableFrames: stableFrames.current,
+        })
       }
       return
     }
@@ -903,9 +898,12 @@ export function ForceLayout({
     }
 
     // Physics simulation
-    const physicsStart = devMode ? performance.now() : 0
     const dt = Math.min(delta, 0.05)
-    const newPositions = new Map(positions)
+    const newPositions = nextPositionsRef.current
+    newPositions.clear()
+    for (const [id, pos] of positions.entries()) {
+      newPositions.set(id, pos)
+    }
 
     // Apply dragging position
     if (draggedNodePos.current) {
@@ -913,127 +911,136 @@ export function ForceLayout({
     }
 
     // Calculate forces
-    const forces = new Map<string, [number, number, number]>()
+    const forces = forcesRef.current
+    forces.clear()
     nodes.forEach((n) => forces.set(n.id, [0, 0, 0]))
 
     // Repulsion using Barnes-Hut O(n log n) approximation
-    const posArray: [number, number, number][] = []
-    const forceArray: [number, number, number][] = []
-    const nodeOrder: string[] = []
+    profiler.span('layout.repulsion', () => {
+      const posArray: [number, number, number][] = []
+      const forceArray: [number, number, number][] = []
+      const nodeOrder: string[] = []
 
-    for (const node of nodes) {
-      const pos = positions.get(node.id)
-      if (pos) {
-        posArray.push([...pos] as [number, number, number])
-        forceArray.push([0, 0, 0])
-        nodeOrder.push(node.id)
+      for (const node of nodes) {
+        const pos = positions.get(node.id)
+        if (pos) {
+          posArray.push([...pos] as [number, number, number])
+          forceArray.push([0, 0, 0])
+          nodeOrder.push(node.id)
+        }
       }
-    }
 
-    calculateBarnesHutRepulsion(posArray, forceArray, physics.repulsionStrength, 0.7)
+      calculateBarnesHutRepulsion(posArray, forceArray, physics.repulsionStrength, 0.7)
 
-    // Copy forces back to the forces map
-    for (let i = 0; i < nodeOrder.length; i++) {
-      const f = forces.get(nodeOrder[i])
-      if (f) {
-        f[0] += forceArray[i][0]
-        f[1] += forceArray[i][1]
-        f[2] += forceArray[i][2]
+      // Copy forces back to the forces map
+      for (let i = 0; i < nodeOrder.length; i++) {
+        const f = forces.get(nodeOrder[i])
+        if (f) {
+          f[0] += forceArray[i][0]
+          f[1] += forceArray[i][1]
+          f[2] += forceArray[i][2]
+        }
       }
-    }
+    })
 
     // Attraction (Hooke's law) with optional adaptive spring length
-    const baseSpringLength = physics.springLength
-    const springStrength = physics.springStrength
+    profiler.span('layout.springs', () => {
+      const baseSpringLength = physics.springLength
+      const springStrength = physics.springStrength
 
-    edges.forEach((edge) => {
-      // Skip spring forces for bubble nodes - they should only have repulsion
-      // This prevents bubbles from being pulled together by edges
-      const isBubbleEdge = edge.source.startsWith('group:') || edge.target.startsWith('group:')
-      if (isBubbleEdge) return
+      edges.forEach((edge) => {
+        // Skip spring forces for bubble nodes - they should only have repulsion
+        // This prevents bubbles from being pulled together by edges
+        const isBubbleEdge = edge.source.startsWith('group:') || edge.target.startsWith('group:')
+        if (isBubbleEdge) return
 
-      const p1 = positions.get(edge.source)
-      const p2 = positions.get(edge.target)
-      if (!p1 || !p2) return
+        const p1 = positions.get(edge.source)
+        const p2 = positions.get(edge.target)
+        if (!p1 || !p2) return
 
-      const dx = p2[0] - p1[0]
-      const dy = p2[1] - p1[1]
-      const dz = p2[2] - p1[2]
-      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.1
+        const dx = p2[0] - p1[0]
+        const dy = p2[1] - p1[1]
+        const dz = p2[2] - p1[2]
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.1
 
-      // Calculate spring length (adaptive or fixed)
-      let springLength = baseSpringLength
-      if (physics.adaptiveSpringEnabled && nodeDegrees) {
-        const deg1 = nodeDegrees.get(edge.source)
-        const deg2 = nodeDegrees.get(edge.target)
-        if (deg1 && deg2) {
-          springLength = calculateAdaptiveSpringLength(deg1, deg2, {
-            mode: physics.adaptiveSpringMode,
-            baseLength: baseSpringLength,
-            scaleFactor: physics.adaptiveSpringScale,
-            minLength: baseSpringLength * 0.5,
-            maxLength: baseSpringLength * 5,
-          })
-        }
-      }
-
-      // Apply community-aware layout adjustment
-      if (physics.communityAwareLayout && nodeCommunities) {
-        const comm1 = nodeCommunities.get(edge.source)
-        const comm2 = nodeCommunities.get(edge.target)
-        if (comm1 !== undefined && comm2 !== undefined) {
-          if (comm1 === comm2) {
-            // Same community: shorter edges (pull together)
-            springLength *= physics.communitySameMultiplier
-          } else {
-            // Different communities: longer edges (push apart)
-            springLength *= physics.communityCrossMultiplier
+        // Calculate spring length (adaptive or fixed)
+        let springLength = baseSpringLength
+        if (physics.adaptiveSpringEnabled && nodeDegrees) {
+          const deg1 = nodeDegrees.get(edge.source)
+          const deg2 = nodeDegrees.get(edge.target)
+          if (deg1 && deg2) {
+            springLength = calculateAdaptiveSpringLength(deg1, deg2, {
+              mode: physics.adaptiveSpringMode,
+              baseLength: baseSpringLength,
+              scaleFactor: physics.adaptiveSpringScale,
+              minLength: baseSpringLength * 0.5,
+              maxLength: baseSpringLength * 5,
+            })
           }
         }
-      }
 
-      const displacement = dist - springLength
-      const force = springStrength * displacement
+        // Apply community-aware layout adjustment
+        if (physics.communityAwareLayout && nodeCommunities) {
+          const comm1 = nodeCommunities.get(edge.source)
+          const comm2 = nodeCommunities.get(edge.target)
+          if (comm1 !== undefined && comm2 !== undefined) {
+            if (comm1 === comm2) {
+              // Same community: shorter edges (pull together)
+              springLength *= physics.communitySameMultiplier
+            } else {
+              // Different communities: longer edges (push apart)
+              springLength *= physics.communityCrossMultiplier
+            }
+          }
+        }
 
-      const f1 = forces.get(edge.source)
-      const f2 = forces.get(edge.target)
-      if (f1 && f2) {
-        const fx = (dx / dist) * force
-        const fy = (dy / dist) * force
-        const fz = (dz / dist) * force
-        f1[0] += fx
-        f1[1] += fy
-        f1[2] += fz
-        f2[0] -= fx
-        f2[1] -= fy
-        f2[2] -= fz
-      }
+        const displacement = dist - springLength
+        const force = springStrength * displacement
+
+        const f1 = forces.get(edge.source)
+        const f2 = forces.get(edge.target)
+        if (f1 && f2) {
+          const fx = (dx / dist) * force
+          const fy = (dy / dist) * force
+          const fz = (dz / dist) * force
+          f1[0] += fx
+          f1[1] += fy
+          f1[2] += fz
+          f2[0] -= fx
+          f2[1] -= fy
+          f2[2] -= fz
+        }
+      })
     })
 
     // Center gravity
     const centerStrength = physics.centerStrength
-    nodes.forEach((node) => {
-      const pos = positions.get(node.id)
-      if (!pos) return
-      const f = forces.get(node.id)!
-      f[0] -= pos[0] * centerStrength
-      f[1] -= pos[1] * centerStrength
-      f[2] -= pos[2] * centerStrength
-    })
+    const bubbleIds = profiler.span('layout.center', () => {
+      nodes.forEach((node) => {
+        const pos = positions.get(node.id)
+        if (!pos) return
+        const f = forces.get(node.id)!
+        f[0] -= pos[0] * centerStrength
+        f[1] -= pos[1] * centerStrength
+        f[2] -= pos[2] * centerStrength
+      })
 
-    // Bubble-to-bubble repulsion (bubbles are synthetic nodes not in the main nodes array)
-    // This ensures namespace bubbles spread out rather than clustering together
-    const bubbleIds = Array.from(positions.keys()).filter(id => id.startsWith('group:'))
+      // Bubble-to-bubble repulsion (bubbles are synthetic nodes not in the main nodes array)
+      // This ensures namespace bubbles spread out rather than clustering together
+      const bIds = Array.from(positions.keys()).filter(id => id.startsWith('group:'))
 
-    // Apply center gravity to bubbles too (so they don't fly off)
-    bubbleIds.forEach((bubbleId) => {
-      const pos = positions.get(bubbleId)
-      if (!pos) return
-      if (!forces.has(bubbleId)) forces.set(bubbleId, [0, 0, 0])
-      const f = forces.get(bubbleId)!
-      f[0] -= pos[0] * centerStrength * 0.5 // Weaker center pull for bubbles
-      f[1] -= pos[1] * centerStrength * 0.5
-      f[2] -= pos[2] * centerStrength * 0.5
+      // Apply center gravity to bubbles too (so they don't fly off)
+      bIds.forEach((bubbleId) => {
+        const pos = positions.get(bubbleId)
+        if (!pos) return
+        if (!forces.has(bubbleId)) forces.set(bubbleId, [0, 0, 0])
+        const f = forces.get(bubbleId)!
+        f[0] -= pos[0] * centerStrength * 0.5 // Weaker center pull for bubbles
+        f[1] -= pos[1] * centerStrength * 0.5
+        f[2] -= pos[2] * centerStrength * 0.5
+      })
+
+      return bIds
     })
 
     if (bubbleIds.length > 1) {
@@ -1225,103 +1232,107 @@ export function ForceLayout({
     }
 
     // Apply forces (Verlet integration)
-    const damping = physics.damping
-    const maxVelocity = 10
-    let totalMovement = 0
+    const totalMovement = profiler.span('layout.integrate', () => {
+      const damping = physics.damping
+      const maxVelocity = 10
+      let movement = 0
 
-    nodes.forEach((node) => {
-      if (node.id === draggingNodeId) return
+      nodes.forEach((node) => {
+        if (node.id === draggingNodeId) return
 
-      const pos = positions.get(node.id)
-      const vel = velocities.current.get(node.id) || [0, 0, 0]
-      const force = forces.get(node.id)
-      if (!pos || !force) return
+        const pos = positions.get(node.id)
+        const vel = velocities.current.get(node.id) || [0, 0, 0]
+        const force = forces.get(node.id)
+        if (!pos || !force) return
 
-      // Update velocity
-      vel[0] = (vel[0] + force[0] * dt) * damping
-      vel[1] = (vel[1] + force[1] * dt) * damping
-      vel[2] = (vel[2] + force[2] * dt) * damping
+        // Update velocity
+        vel[0] = (vel[0] + force[0] * dt) * damping
+        vel[1] = (vel[1] + force[1] * dt) * damping
+        vel[2] = (vel[2] + force[2] * dt) * damping
 
-      // Limit velocity
-      const speed = Math.sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2])
-      if (speed > maxVelocity) {
-        vel[0] *= maxVelocity / speed
-        vel[1] *= maxVelocity / speed
-        vel[2] *= maxVelocity / speed
-      }
-
-      velocities.current.set(node.id, vel)
-
-      // Update position
-      let newPos: [number, number, number] = [
-        pos[0] + vel[0] * dt,
-        pos[1] + vel[1] * dt,
-        pos[2] + vel[2] * dt,
-      ]
-
-      // Guard against NaN - reset to origin if position becomes invalid
-      if (Number.isNaN(newPos[0]) || Number.isNaN(newPos[1]) || Number.isNaN(newPos[2])) {
-        newPositions.set(node.id, [0, 0, 0])
-        velocities.current.set(node.id, [0, 0, 0])
-        return
-      }
-
-      // Hard boundary clamp - if still outside, clamp to boundary edge
-      if (boundaryRadius > 0) {
-        const newDist = Math.sqrt(newPos[0] * newPos[0] + newPos[1] * newPos[1] + newPos[2] * newPos[2])
-        if (newDist > boundaryRadius) {
-          const scale = boundaryRadius / newDist
-          newPos = [newPos[0] * scale, newPos[1] * scale, newPos[2] * scale]
-          // Also kill velocity to prevent bouncing
-          velocities.current.set(node.id, [0, 0, 0])
+        // Limit velocity
+        const speed = Math.sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2])
+        if (speed > maxVelocity) {
+          vel[0] *= maxVelocity / speed
+          vel[1] *= maxVelocity / speed
+          vel[2] *= maxVelocity / speed
         }
-      }
 
-      newPositions.set(node.id, newPos)
+        velocities.current.set(node.id, vel)
 
-      totalMovement += Math.abs(vel[0]) + Math.abs(vel[1]) + Math.abs(vel[2])
-    })
+        // Update position
+        let newPos: [number, number, number] = [
+          pos[0] + vel[0] * dt,
+          pos[1] + vel[1] * dt,
+          pos[2] + vel[2] * dt,
+        ]
 
-    // Apply forces to bubble nodes (not in main nodes array)
-    bubbleIds.forEach((bubbleId) => {
-      const pos = positions.get(bubbleId)
-      const force = forces.get(bubbleId)
-      if (!pos || !force) return
+        // Guard against NaN - reset to origin if position becomes invalid
+        if (Number.isNaN(newPos[0]) || Number.isNaN(newPos[1]) || Number.isNaN(newPos[2])) {
+          newPositions.set(node.id, [0, 0, 0])
+          velocities.current.set(node.id, [0, 0, 0])
+          return
+        }
 
-      const vel = velocities.current.get(bubbleId) || [0, 0, 0]
+        // Hard boundary clamp - if still outside, clamp to boundary edge
+        if (boundaryRadius > 0) {
+          const newDist = Math.sqrt(newPos[0] * newPos[0] + newPos[1] * newPos[1] + newPos[2] * newPos[2])
+          if (newDist > boundaryRadius) {
+            const scale = boundaryRadius / newDist
+            newPos = [newPos[0] * scale, newPos[1] * scale, newPos[2] * scale]
+            // Also kill velocity to prevent bouncing
+            velocities.current.set(node.id, [0, 0, 0])
+          }
+        }
 
-      // Update velocity
-      vel[0] = (vel[0] + force[0] * dt) * damping
-      vel[1] = (vel[1] + force[1] * dt) * damping
-      vel[2] = (vel[2] + force[2] * dt) * damping
+        newPositions.set(node.id, newPos)
 
-      // Limit velocity
-      const speed = Math.sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2])
-      if (speed > maxVelocity) {
-        vel[0] *= maxVelocity / speed
-        vel[1] *= maxVelocity / speed
-        vel[2] *= maxVelocity / speed
-      }
+        movement += Math.abs(vel[0]) + Math.abs(vel[1]) + Math.abs(vel[2])
+      })
 
-      velocities.current.set(bubbleId, vel)
+      // Apply forces to bubble nodes (not in main nodes array)
+      bubbleIds.forEach((bubbleId) => {
+        const pos = positions.get(bubbleId)
+        const force = forces.get(bubbleId)
+        if (!pos || !force) return
 
-      // Update position
-      const newPos: [number, number, number] = [
-        pos[0] + vel[0] * dt,
-        pos[1] + vel[1] * dt,
-        pos[2] + vel[2] * dt,
-      ]
+        const vel = velocities.current.get(bubbleId) || [0, 0, 0]
 
-      // Guard against NaN - reset to origin if position becomes invalid
-      if (Number.isNaN(newPos[0]) || Number.isNaN(newPos[1]) || Number.isNaN(newPos[2])) {
-        newPositions.set(bubbleId, [0, 0, 0])
-        velocities.current.set(bubbleId, [0, 0, 0])
-        return
-      }
+        // Update velocity
+        vel[0] = (vel[0] + force[0] * dt) * damping
+        vel[1] = (vel[1] + force[1] * dt) * damping
+        vel[2] = (vel[2] + force[2] * dt) * damping
 
-      newPositions.set(bubbleId, newPos)
+        // Limit velocity
+        const speed = Math.sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2])
+        if (speed > maxVelocity) {
+          vel[0] *= maxVelocity / speed
+          vel[1] *= maxVelocity / speed
+          vel[2] *= maxVelocity / speed
+        }
 
-      totalMovement += Math.abs(vel[0]) + Math.abs(vel[1]) + Math.abs(vel[2])
+        velocities.current.set(bubbleId, vel)
+
+        // Update position
+        const newPos: [number, number, number] = [
+          pos[0] + vel[0] * dt,
+          pos[1] + vel[1] * dt,
+          pos[2] + vel[2] * dt,
+        ]
+
+        // Guard against NaN - reset to origin if position becomes invalid
+        if (Number.isNaN(newPos[0]) || Number.isNaN(newPos[1]) || Number.isNaN(newPos[2])) {
+          newPositions.set(bubbleId, [0, 0, 0])
+          velocities.current.set(bubbleId, [0, 0, 0])
+          return
+        }
+
+        newPositions.set(bubbleId, newPos)
+
+        movement += Math.abs(vel[0]) + Math.abs(vel[1]) + Math.abs(vel[2])
+      })
+
+      return movement
     })
 
     // Update ref directly (don't trigger React re-renders)
@@ -1366,20 +1377,12 @@ export function ForceLayout({
       }
     }
 
-    // Dev mode metrics
-    if (devMode) {
-      recordPhysicsTime(physicsStart)
-      updateNodeEdgeCount(nodes.length, edges.length)
-      updateStableFrames(stableFrames.current)
-      // Three.js renderer stats
-      const info = gl.info
-      updateRendererInfo({
-        drawCalls: info.render.calls,
-        triangles: info.render.triangles,
-        geometries: info.memory.geometries,
-        textures: info.memory.textures,
+    if (profiler.enabled) {
+      profiler.recordMetrics({
+        nodeCount: nodes.length,
+        edgeCount: edges.length,
+        stableFrames: stableFrames.current,
       })
-      recordFrameEnd(frameStart)
     }
   })
 

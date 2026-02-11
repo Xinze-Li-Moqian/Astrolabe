@@ -17,7 +17,8 @@ import { useCanvasStore } from '@/lib/canvasStore'
 import ForceLayout, { PhysicsParams, DEFAULT_PHYSICS } from './ForceLayout'
 import { RadialLayout } from './layouts/RadialLayout'
 import { HierarchicalLayout } from './layouts/HierarchicalLayout'
-import DevPanel from '@/components/DevPanel'
+import ProfilerOverlay from '@/components/ProfilerOverlay'
+import { FrameProfilerHooks } from './FrameProfilerHooks'
 import {
   calculateBatchSpawnPositions,
   detectNodeChanges,
@@ -31,12 +32,14 @@ import type { ProofStatusType } from '@/lib/proofStatus'
 import { useLensedGraph, useLensActions } from '@/hooks/useLensedGraph'
 import type { AstrolabeNode, AstrolabeEdge } from '@/types/graph'
 import type { NamespaceGroup } from '@/lib/lenses/types'
+import { isDevMode } from '@/lib/devMode'
 
 // Threshold for using batched edge rendering (single draw call)
 const BATCHED_EDGES_THRESHOLD = 500
 
 // Threshold for sparse edge mode (only show edges connected to selected/hovered node)
 const SPARSE_EDGES_THRESHOLD = 2000
+const PROFILER_UI_ALLOWED = process.env.NODE_ENV !== 'production'
 
 // Re-export types and default values
 export type { PhysicsParams }
@@ -339,6 +342,7 @@ function CameraAutoCenter({
   hasUserInteractedRef,
   cameraInitKey,
   positionsCount,
+  displayNodeIds,
 }: {
   positionsRef: React.MutableRefObject<Map<string, [number, number, number]>>
   controlsRef: React.RefObject<any>
@@ -347,6 +351,7 @@ function CameraAutoCenter({
   hasUserInteractedRef: React.MutableRefObject<boolean>
   cameraInitKey: string
   positionsCount: number
+  displayNodeIds: Set<string>
 }) {
   const { camera } = useThree()
   const lastCenterKey = useRef<string | null>(null)
@@ -355,34 +360,54 @@ function CameraAutoCenter({
     if (!enabled) return
     if (hasUserInteractedRef.current) return
     if (!controlsRef.current) return
-    if (positionsRef.current.size === 0) return
+    if (displayNodeIds.size === 0) return
 
     const centerKey = `${layoutStableTick}:${cameraInitKey}:${positionsCount}`
     if (lastCenterKey.current === centerKey) return
 
-    let cx = 0, cy = 0, cz = 0
-    for (const pos of positionsRef.current.values()) {
-      cx += pos[0]
-      cy += pos[1]
-      cz += pos[2]
+    // Only center on the currently displayed nodes, not all positions
+    let cx = 0, cy = 0, cz = 0, count = 0
+    for (const id of displayNodeIds) {
+      const pos = positionsRef.current.get(id)
+      if (pos) {
+        cx += pos[0]
+        cy += pos[1]
+        cz += pos[2]
+        count++
+      }
     }
-    cx /= positionsRef.current.size
-    cy /= positionsRef.current.size
-    cz /= positionsRef.current.size
+    if (count === 0) return
+    cx /= count
+    cy /= count
+    cz /= count
 
-    const target = controlsRef.current.target
+    // Calculate graph extent (max distance from center) for zoom-to-fit
+    let maxRadius = 0
+    for (const id of displayNodeIds) {
+      const pos = positionsRef.current.get(id)
+      if (pos) {
+        const dx = pos[0] - cx
+        const dy = pos[1] - cy
+        const dz = pos[2] - cz
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+        if (dist > maxRadius) maxRadius = dist
+      }
+    }
+
     const center = new THREE.Vector3(cx, cy, cz)
-    const offset = new THREE.Vector3().subVectors(camera.position, target)
-    const distance = target.distanceTo(center)
 
-    if (distance > 0.001) {
-      controlsRef.current.target.copy(center)
-      camera.position.copy(center.clone().add(offset))
-      controlsRef.current.update()
-    }
+    // Compute camera distance to fit the graph in view
+    const fov = (camera as THREE.PerspectiveCamera).fov ?? 60
+    const fovRad = (fov / 2) * (Math.PI / 180)
+    const fitDistance = Math.max(10, (maxRadius * 1.5) / Math.tan(fovRad))
+
+    // Position camera along Z axis looking at center
+    controlsRef.current.target.copy(center)
+    camera.position.set(cx, cy, cz + fitDistance)
+    controlsRef.current.update()
 
     lastCenterKey.current = centerKey
-  }, [camera, controlsRef, enabled, layoutStableTick, hasUserInteractedRef, positionsRef, cameraInitKey, positionsCount])
+  }, [camera, controlsRef, enabled, layoutStableTick, hasUserInteractedRef, positionsRef, cameraInitKey, positionsCount, displayNodeIds])
 
   return null
 }
@@ -517,6 +542,8 @@ function GraphScene({
   onNodeContextMenu?: (node: Node, clientX: number, clientY: number) => void
   nodeCommunities?: Map<string, number> | null
 }) {
+  const devMode = PROFILER_UI_ALLOWED && isDevMode()
+
   // Handler for node selection
   // Bubble left-click: just select/focus (don't expand - use right-click context menu for that)
   const handleNodeSelectWithBubble = useCallback((node: Node | null) => {
@@ -569,11 +596,20 @@ function GraphScene({
   const controlsRef = useRef<any>(null)
   const hasUserInteractedRef = useRef(false)
   const shouldAutoCenter = !focusNodeId && !focusEdgeId
-  const cameraInitKey = `${initialCameraPosition?.join(',') ?? ''}|${initialCameraTarget?.join(',') ?? ''}`
+  const cameraInitKey = `${initialCameraPosition?.join(',') ?? ''}|${activeLensId}`
   const handleUserInteractionStart = useCallback(() => {
     hasUserInteractedRef.current = true
   }, [])
+  // Reset user interaction flag on lens change so CameraAutoCenter can re-frame the view
+  const prevLensIdForCameraRef = useRef(activeLensId)
+  useEffect(() => {
+    if (activeLensId !== prevLensIdForCameraRef.current) {
+      prevLensIdForCameraRef.current = activeLensId
+      hasUserInteractedRef.current = false
+    }
+  }, [activeLensId])
   const positionsCount = positionsRef.current.size
+  const displayNodeIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes])
 
   // Precompute adjacency once per edges change - O(E) once, then O(degree) per lookup
   // This replaces the previous O(E) scan on every click/hover
@@ -674,6 +710,7 @@ function GraphScene({
 
   return (
     <>
+      {devMode ? <FrameProfilerHooks /> : null}
       <ambientLight intensity={0.8} />
       <directionalLight position={[10, 15, 10]} intensity={3.0} />
       <pointLight position={[-10, -10, -10]} intensity={0.5} />
@@ -842,6 +879,7 @@ function GraphScene({
         hasUserInteractedRef={hasUserInteractedRef}
         cameraInitKey={cameraInitKey}
         positionsCount={positionsCount}
+        displayNodeIds={displayNodeIds}
       />
       <CameraZoomRecenter
         positionsRef={positionsRef}
@@ -1303,12 +1341,23 @@ export function ForceGraph3D({
     }
   }, [])
 
+  // Reset layout when graph becomes empty
   useEffect(() => {
     if (allNodes.length === 0) {
       hasShownLayout.current = false
       setLayoutReady(false)
     }
   }, [allNodes.length])
+
+  // Reset layout when lens changes so we don't render stale positions
+  const prevLensIdRef = useRef(activeLensId)
+  useEffect(() => {
+    if (activeLensId !== prevLensIdRef.current) {
+      prevLensIdRef.current = activeLensId
+      hasShownLayout.current = false
+      setLayoutReady(false)
+    }
+  }, [activeLensId])
 
   if (allNodes.length === 0) {
     return (
@@ -1409,7 +1458,7 @@ export function ForceGraph3D({
         )}
         {customNodes.length > 0 ? ` + ${customNodes.length} custom` : ''}
       </div>
-      <DevPanel className="absolute top-4 right-4" />
+      {PROFILER_UI_ALLOWED ? <ProfilerOverlay className="absolute bottom-4 right-4" /> : null}
 
       {/* Bubble context menu */}
       {contextMenu && (

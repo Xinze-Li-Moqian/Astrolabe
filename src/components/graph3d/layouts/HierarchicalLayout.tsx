@@ -8,6 +8,13 @@
 import { useEffect, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import type { AstrolabeNode, AstrolabeEdge } from '@/types/graph'
+import { profiler } from '@/lib/profiler'
+
+// Readiness semantics:
+// - physics disabled: ready after a short settling delay
+// - physics enabled: ready after N stable frames
+const HIERARCHICAL_READY_FRAME_DELAY = 3
+const HIERARCHICAL_STABLE_FRAME_THRESHOLD = 30
 
 // ============================================
 // Types
@@ -167,10 +174,14 @@ export function HierarchicalLayout({
 }: HierarchicalLayoutProps) {
   const initialized = useRef(false)
   const frameCount = useRef(0)
+  const stableFrames = useRef(0)
+  const hasReportedReady = useRef(false)
+  const layerMapRef = useRef<Map<number, string[]>>(new Map())
 
   // Initialize positions on mount or when data changes
   useEffect(() => {
     if (!focusNodeId || nodes.length === 0) return
+    const t0 = performance.now()
 
     const positions = calculateHierarchicalPositions(
       nodes,
@@ -188,56 +199,85 @@ export function HierarchicalLayout({
 
     initialized.current = true
     frameCount.current = 0
+    stableFrames.current = 0
+    hasReportedReady.current = false
+    profiler.recordOneShot('layout.hierarchical.init', performance.now() - t0, {
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      focusNode: focusNodeId,
+      direction,
+    })
   }, [nodes, edges, focusNodeId, direction, layerSpacing, nodeSpacing, positionsRef])
 
   // Optional physics for gentle within-layer repulsion
   useFrame(() => {
     if (!initialized.current) return
 
-    frameCount.current++
-
-    // Signal ready after a few frames
-    if (frameCount.current === 3 && onLayoutReady) {
-      onLayoutReady()
-    }
-
-    if (!enablePhysics) return
-
-    // Gentle horizontal repulsion within layers
-    // Group nodes by their current Y position (layer)
-    const layerMap = new Map<number, string[]>()
-    for (const node of nodes) {
-      const pos = positionsRef.current.get(node.id)
-      if (!pos) continue
-      const layerY = Math.round(pos[1] / layerSpacing) * layerSpacing
-      if (!layerMap.has(layerY)) layerMap.set(layerY, [])
-      layerMap.get(layerY)!.push(node.id)
-    }
-
-    // Apply repulsion within each layer
-    const repulsionStrength = 0.1
-    const minDistance = nodeSpacing * 0.8
-
-    for (const nodeIds of layerMap.values()) {
-      if (nodeIds.length < 2) continue
-
-      for (let i = 0; i < nodeIds.length; i++) {
-        for (let j = i + 1; j < nodeIds.length; j++) {
-          const posA = positionsRef.current.get(nodeIds[i])!
-          const posB = positionsRef.current.get(nodeIds[j])!
-
-          const dx = posA[0] - posB[0]
-          const distance = Math.abs(dx)
-
-          if (distance < minDistance && distance > 0.01) {
-            const force = (minDistance - distance) * repulsionStrength
-            const sign = dx > 0 ? 1 : -1
-            posA[0] += sign * force
-            posB[0] -= sign * force
-          }
+    profiler.span('layout.hierarchical.step', () => {
+      frameCount.current++
+      if (enablePhysics) {
+        // Gentle horizontal repulsion within layers.
+        const layerMap = layerMapRef.current
+        layerMap.clear()
+        for (const node of nodes) {
+          const pos = positionsRef.current.get(node.id)
+          if (!pos) continue
+          const layerY = Math.round(pos[1] / layerSpacing) * layerSpacing
+          if (!layerMap.has(layerY)) layerMap.set(layerY, [])
+          layerMap.get(layerY)!.push(node.id)
         }
+
+        const totalAdjustment = profiler.span('layout.hierarchical.repulsion', () => {
+          let adjustment = 0
+          const repulsionStrength = 0.1
+          const minDistance = nodeSpacing * 0.8
+
+          for (const nodeIds of layerMap.values()) {
+            if (nodeIds.length < 2) continue
+
+            for (let i = 0; i < nodeIds.length; i++) {
+              for (let j = i + 1; j < nodeIds.length; j++) {
+                const posA = positionsRef.current.get(nodeIds[i])!
+                const posB = positionsRef.current.get(nodeIds[j])!
+
+                const dx = posA[0] - posB[0]
+                const distance = Math.abs(dx)
+
+                if (distance < minDistance && distance > 0.01) {
+                  const force = (minDistance - distance) * repulsionStrength
+                  const sign = dx > 0 ? 1 : -1
+                  posA[0] += sign * force
+                  posB[0] -= sign * force
+                  adjustment += force * 2
+                }
+              }
+            }
+          }
+
+          return adjustment
+        })
+
+        stableFrames.current = totalAdjustment < 0.01 ? stableFrames.current + 1 : 0
+      } else {
+        stableFrames.current = 0
       }
-    }
+
+      const ready = enablePhysics
+        ? stableFrames.current > HIERARCHICAL_STABLE_FRAME_THRESHOLD
+        : frameCount.current >= HIERARCHICAL_READY_FRAME_DELAY
+      if (ready && !hasReportedReady.current) {
+        hasReportedReady.current = true
+        onLayoutReady?.()
+      }
+
+      if (profiler.enabled) {
+        profiler.recordMetrics({
+          nodeCount: nodes.length,
+          edgeCount: edges.length,
+          stableFrames: stableFrames.current,
+        })
+      }
+    })
   })
 
   return null

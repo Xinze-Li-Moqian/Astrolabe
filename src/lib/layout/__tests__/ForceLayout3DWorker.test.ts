@@ -126,10 +126,11 @@ describe('ForceLayout3DWorker', () => {
         },
       }
 
-      const movement = simulateStep(state, 0.016)
+      const step = simulateStep(state, 0.016)
 
       // Should return some movement (forces were applied)
-      expect(movement).toBeGreaterThan(0)
+      expect(step.movement).toBeGreaterThan(0)
+      expect(step.phases.total).toBeGreaterThanOrEqual(0)
 
       // Positions should have changed
       expect(state.positions.get('a')).not.toEqual([0, 0, 0])
@@ -364,8 +365,9 @@ describe('Adaptive Spring Length', () => {
       },
     }
 
-    const movement = simulateStep(state, 0.016)
-    expect(movement).toBeGreaterThan(0)
+    const step = simulateStep(state, 0.016)
+    expect(step.movement).toBeGreaterThan(0)
+    expect(step.phases.repulsion).toBeGreaterThanOrEqual(0)
   })
 })
 
@@ -406,7 +408,8 @@ describe('Full physics config', () => {
     }
 
     // Should not throw
-    const movement = simulateStep(state, 0.016)
-    expect(movement).toBeGreaterThanOrEqual(0)
+    const step = simulateStep(state, 0.016)
+    expect(step.movement).toBeGreaterThanOrEqual(0)
+    expect(step.phases.total).toBeGreaterThanOrEqual(0)
   })
 })
