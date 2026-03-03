@@ -33,6 +33,10 @@ export interface UseLensedGraphResult {
   activeLensId: string
   isAwaitingFocus: boolean
   lensFocusNodeId: string | null
+
+  // Layout hints
+  clusteringEnabled?: boolean
+  clusteringDepth?: number
 }
 
 /**
@@ -83,6 +87,10 @@ export function useLensedGraph(
     activeLensId,
     isAwaitingFocus: activationState === 'awaiting-focus',
     lensFocusNodeId,
+
+    // Layout hints
+    clusteringEnabled: pipelineResult.clusteringEnabled,
+    clusteringDepth: pipelineResult.clusteringDepth,
   }
 }
 

@@ -36,6 +36,8 @@ export const LENSES: Lens[] = [
       maxNodes: 300,
     },
     layout: 'force',
+    clusteringEnabled: true,
+    clusteringDepth: 2,
     filterId: null,       // no filtering
     aggregateId: null,    // no aggregation
   },

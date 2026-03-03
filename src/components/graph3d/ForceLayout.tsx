@@ -74,14 +74,14 @@ export const DEFAULT_PHYSICS: PhysicsParams = {
   adaptiveSpringMode: 'sqrt',
   adaptiveSpringScale: 0.5,
   // Community-aware layout defaults
-  communityAwareLayout: true,  // Enabled by default for stronger clustering
+  communityAwareLayout: false,  // Disabled by default to avoid sudden jumps when analysis completes
   communitySameMultiplier: 0.2,  // Tighter same-cluster springs
   communityCrossMultiplier: 5.0,  // Stronger cross-cluster repulsion
   // Community clustering (direct forces)
   communityClusteringStrength: 2.0,  // Max clustering strength
   communitySeparation: 3.0,  // Strong separation between clusters
   // Boundary constraint
-  boundaryRadius: 50,
+  boundaryRadius: 0,                 // 0 = disabled; UI slider can still enable it
   boundaryStrength: 2.0,
 }
 
@@ -271,7 +271,7 @@ function simulateStep(
   }
 
   // Boundary constraint - push nodes back if they exceed the boundary radius
-  const boundaryRadius = physics.boundaryRadius ?? 50
+  const boundaryRadius = physics.boundaryRadius ?? 100
   const boundaryStrength = physics.boundaryStrength ?? 2.0
   if (boundaryRadius > 0 && boundaryStrength > 0) {
     nodes.forEach((node) => {
@@ -1211,7 +1211,7 @@ export function ForceLayout({
     }
 
     // Boundary constraint - push nodes back if they exceed the boundary radius
-    const boundaryRadius = physics.boundaryRadius ?? 50
+    const boundaryRadius = physics.boundaryRadius ?? 100
     const boundaryStrength = physics.boundaryStrength ?? 2.0
     if (boundaryRadius > 0 && boundaryStrength > 0) {
       nodes.forEach((node) => {

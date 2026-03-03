@@ -498,7 +498,7 @@ function LocalEditorContent() {
     const [sizeMappingMode, setSizeMappingMode] = useState<'default' | 'pagerank' | 'indegree' | 'depth' | 'bottleneck' | 'reachability' | 'betweenness' | 'clustering' | 'katz' | 'hub' | 'authority'>('default')
     const [sizeCurveControl, setSizeCurveControl] = useState({ x: 0.25, y: 0.75 })  // Bezier control point
     const [colorMappingMode, setColorMappingMode] = useState<'kind' | 'namespace' | 'community' | 'layer' | 'spectral' | 'curvature' | 'anomaly' | 'embedding' | 'motif'>('kind')
-    const [layoutClusterMode, setLayoutClusterMode] = useState<'none' | 'namespace' | 'community' | 'layer' | 'spectral' | 'embedding' | 'curvature' | 'anomaly' | 'motif'>('community')
+    const [layoutClusterMode, setLayoutClusterMode] = useState<'none' | 'namespace' | 'community' | 'layer' | 'spectral' | 'embedding' | 'curvature' | 'anomaly' | 'motif'>('namespace')
     const [analysisData, setAnalysisData] = useState<{
         pagerank?: Record<string, number>
         indegree?: Record<string, number>
@@ -3188,11 +3188,11 @@ function LocalEditorContent() {
                                                                     min="5"
                                                                     max="200"
                                                                     step="5"
-                                                                    value={physics.boundaryRadius ?? 50}
+                                                                    value={physics.boundaryRadius ?? 100}
                                                                     onChange={(e) => updatePhysicsUndoable({ ...physics, boundaryRadius: Number(e.target.value) })}
                                                                     className="flex-1 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-white"
                                                                 />
-                                                                <span className="text-[10px] text-white/60 w-8 text-right">{physics.boundaryRadius ?? 50}</span>
+                                                                <span className="text-[10px] text-white/60 w-8 text-right">{physics.boundaryRadius ?? 100}</span>
                                                             </div>
                                                         </div>
                                                         )}

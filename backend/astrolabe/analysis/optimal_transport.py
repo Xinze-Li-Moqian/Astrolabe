@@ -72,16 +72,24 @@ def compute_forman_ricci(G: nx.Graph | nx.DiGraph) -> Dict[str, Any]:
 
 def _compute_forman_ricci_library(G: nx.Graph) -> Dict[str, Any]:
     """Use GraphRicciCurvature library for Forman-Ricci."""
-    frc = FormanRicci(G)
+    # GraphRicciCurvature uses %d format for node IDs in logging,
+    # which crashes on string node IDs. Relabel to integers first.
+    int_to_label = dict(enumerate(G.nodes()))
+    label_to_int = {v: k for k, v in int_to_label.items()}
+    G_int = nx.relabel_nodes(G, label_to_int)
+
+    frc = FormanRicci(G_int)
     frc.compute_ricci_curvature()
 
-    # Extract edge curvatures
+    # Extract edge curvatures, mapping back to original string labels
     edge_curvatures = {}
-    for (u, v), data in frc.G.edges(data=True):
-        key = f"{u}--{v}"
+    for u, v, data in frc.G.edges(data=True):
+        orig_u = int_to_label[u]
+        orig_v = int_to_label[v]
+        key = f"{orig_u}--{orig_v}"
         edge_curvatures[key] = {
-            "source": u,
-            "target": v,
+            "source": orig_u,
+            "target": orig_v,
             "curvature": float(data.get("formanCurvature", 0)),
         }
 
@@ -193,16 +201,24 @@ def compute_ollivier_ricci(
         }
 
     try:
-        orc = OllivierRicci(G_undirected, alpha=alpha, method=method, verbose="ERROR")
+        # GraphRicciCurvature uses %d format for node IDs in logging,
+        # which crashes on string node IDs. Relabel to integers first.
+        int_to_label = dict(enumerate(G_undirected.nodes()))
+        label_to_int = {v: k for k, v in int_to_label.items()}
+        G_int = nx.relabel_nodes(G_undirected, label_to_int)
+
+        orc = OllivierRicci(G_int, alpha=alpha, method=method, verbose="ERROR")
         orc.compute_ricci_curvature()
 
-        # Extract edge curvatures
+        # Extract edge curvatures, mapping back to original string labels
         edge_curvatures = {}
-        for (u, v), data in orc.G.edges(data=True):
-            key = f"{u}--{v}"
+        for u, v, data in orc.G.edges(data=True):
+            orig_u = int_to_label[u]
+            orig_v = int_to_label[v]
+            key = f"{orig_u}--{orig_v}"
             edge_curvatures[key] = {
-                "source": u,
-                "target": v,
+                "source": orig_u,
+                "target": orig_v,
                 "curvature": float(data.get("ricciCurvature", 0)),
             }
 

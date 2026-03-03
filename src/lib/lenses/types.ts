@@ -55,6 +55,10 @@ export interface Lens {
 
   // Settings schema for this lens (rendered by LensSettingsPanel)
   settings?: LensSetting[]
+
+  // Physics-level clustering for force-directed layout
+  clusteringEnabled?: boolean
+  clusteringDepth?: number
 }
 
 export type LensLayout = 'force' | 'radial' | 'hierarchical'
@@ -139,6 +143,11 @@ export interface LensPipelineResult {
   edges: Edge[]
   groups: NamespaceGroup[]
   layout: LensLayout
+  activeLensId: string
+  isAwaitingFocus: boolean
+  lensFocusNodeId: string | null
+  clusteringEnabled?: boolean
+  clusteringDepth?: number
 }
 
 // ============================================
