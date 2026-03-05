@@ -14,7 +14,8 @@ import * as THREE from 'three'
 import type { Node, Edge } from '@/types/node'
 import type { CustomNode, CustomEdge, Position3D } from '@/lib/canvasStore'
 import { useCanvasStore } from '@/lib/canvasStore'
-import ForceLayout, { PhysicsParams, DEFAULT_PHYSICS } from './ForceLayout'
+import { PhysicsParams, DEFAULT_PHYSICS } from './ForceLayout'
+import ForceLayoutWorker from './ForceLayoutWorker'
 import { RadialLayout } from './layouts/RadialLayout'
 import { HierarchicalLayout } from './layouts/HierarchicalLayout'
 import ProfilerOverlay from '@/components/ProfilerOverlay'
@@ -25,6 +26,7 @@ import {
   type Position3D as LifecyclePosition3D,
 } from '@/lib/nodeLifecycle'
 import Node3D from './Node3D'
+import InstancedNodeLayer from './InstancedNodeLayer'
 import Edge3D from './Edge3D'
 import BatchedEdges from './BatchedEdges'
 import { BubbleContextMenu } from './BubbleContextMenu'
@@ -39,6 +41,8 @@ const BATCHED_EDGES_THRESHOLD = 500
 
 // Threshold for sparse edge mode (only show edges connected to selected/hovered node)
 const SPARSE_EDGES_THRESHOLD = 2000
+const INSTANCED_NODES_THRESHOLD = 1200
+const LARGE_GRAPH_LABEL_DISTANCE = 70
 const PROFILER_UI_ALLOWED = process.env.NODE_ENV !== 'production'
 
 // Re-export types and default values
@@ -593,6 +597,7 @@ function GraphScene({
 
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null)
+  const { camera } = useThree()
   const controlsRef = useRef<any>(null)
   const hasUserInteractedRef = useRef(false)
   const shouldAutoCenter = !focusNodeId && !focusEdgeId
@@ -610,6 +615,28 @@ function GraphScene({
   }, [activeLensId])
   const positionsCount = positionsRef.current.size
   const displayNodeIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes])
+  const isLargeGraph = nodes.length >= INSTANCED_NODES_THRESHOLD
+  const useInstancedNodes = activeLayout === 'force' && isLargeGraph
+  const [labelsZoomedIn, setLabelsZoomedIn] = useState(!isLargeGraph)
+  const labelsZoomedInRef = useRef(!isLargeGraph)
+
+  useEffect(() => {
+    const next = !isLargeGraph
+    labelsZoomedInRef.current = next
+    setLabelsZoomedIn(next)
+  }, [isLargeGraph])
+
+  useFrame(() => {
+    if (!showLabels || !isLargeGraph) return
+    const target = controlsRef.current?.target
+    if (!target) return
+
+    const next = camera.position.distanceTo(target) <= LARGE_GRAPH_LABEL_DISTANCE
+    if (next !== labelsZoomedInRef.current) {
+      labelsZoomedInRef.current = next
+      setLabelsZoomedIn(next)
+    }
+  })
 
   // Precompute adjacency once per edges change - O(E) once, then O(degree) per lookup
   // This replaces the previous O(E) scan on every click/hover
@@ -708,6 +735,54 @@ function GraphScene({
     }
   }, [highlightedEdge, edges])
 
+  const edgeEndpointIds = useMemo(() => {
+    const ids = new Set<string>()
+    if (highlightedEdge) {
+      ids.add(highlightedEdge.source)
+      ids.add(highlightedEdge.target)
+    }
+    return ids
+  }, [highlightedEdge])
+
+  const selectedNodeIds = useMemo(() => {
+    const ids = new Set<string>()
+    if (selectedNodeId) ids.add(selectedNodeId)
+    for (const id of edgeEndpointIds) ids.add(id)
+    return ids
+  }, [selectedNodeId, edgeEndpointIds])
+
+  const dimmedNodeIds = useMemo(() => {
+    if (!highlightedEdge && !highlightedNamespace) return null
+    const ids = new Set<string>()
+    for (const node of nodes) {
+      const dimmedByEdge = highlightedEdge !== null && !edgeEndpointIds.has(node.id)
+      const dimmedByNamespace = highlightedNamespace !== null && !highlightedNamespace.nodeIds.has(node.id)
+      if (dimmedByEdge || dimmedByNamespace) {
+        ids.add(node.id)
+      }
+    }
+    return ids
+  }, [nodes, highlightedEdge, highlightedNamespace, edgeEndpointIds])
+
+  const largeGraphLabelNodeIds = useMemo(() => {
+    if (!showLabels || !labelsZoomedIn || !useInstancedNodes) return []
+
+    const ids: string[] = []
+    const pushUnique = (id: string | null | undefined) => {
+      if (!id) return
+      if (!ids.includes(id)) ids.push(id)
+    }
+
+    pushUnique(selectedNodeId)
+    pushUnique(hoveredNodeId)
+    if (highlightedEdge) {
+      pushUnique(highlightedEdge.source)
+      pushUnique(highlightedEdge.target)
+    }
+
+    return ids.slice(0, 4)
+  }, [showLabels, labelsZoomedIn, useInstancedNodes, selectedNodeId, hoveredNodeId, highlightedEdge])
+
   return (
     <>
       {devMode ? <FrameProfilerHooks /> : null}
@@ -734,7 +809,7 @@ function GraphScene({
           onLayoutReady={onWarmupComplete}
         />
       ) : (
-        <ForceLayout
+        <ForceLayoutWorker
           nodes={nodes}
           edges={edges}
           positionsRef={positionsRef}
@@ -807,14 +882,37 @@ function GraphScene({
         )
       })}
 
-      {layoutReady && nodes.map(node => {
+      {layoutReady && useInstancedNodes ? (
+        <InstancedNodeLayer
+          nodes={nodes}
+          positionsRef={positionsRef}
+          selectedNodeIds={selectedNodeIds}
+          dimmedNodeIds={dimmedNodeIds}
+          hoveredNodeId={hoveredNodeId}
+          setHoveredNodeId={setHoveredNodeId}
+          setDraggingNodeId={setDraggingNodeId}
+          onNodeSelect={handleNodeSelectWithBubble}
+          onNodeContextMenu={onNodeContextMenu}
+          isAddingEdge={isAddingEdge}
+          isRemovingNodes={isRemovingNodes}
+          showLabels={showLabels}
+          labelsZoomedIn={labelsZoomedIn}
+          labelNodeIds={largeGraphLabelNodeIds}
+        />
+      ) : layoutReady && nodes.map(node => {
         if (!positionsRef.current.has(node.id)) return null
-        const isDimmedByEdge = highlightedEdge !== null && node.id !== highlightedEdge.source && node.id !== highlightedEdge.target
-        const isDimmedByNamespace = highlightedNamespace !== null && !highlightedNamespace.nodeIds.has(node.id)
-        const isEdgeEndpoint = highlightedEdge !== null && (node.id === highlightedEdge.source || node.id === highlightedEdge.target)
+        const isEdgeEndpoint = edgeEndpointIds.has(node.id)
         const hasHiddenNeighbors = nodesWithHiddenNeighbors?.has(node.id) ?? false
-
         const isBubbleNode = node.id.startsWith('group:')
+        const isSelected = selectedNodeIds.has(node.id)
+        const isHovered = hoveredNodeId === node.id
+        const isDimmed = dimmedNodeIds?.has(node.id) ?? false
+        const shouldShowLabel = showLabels && (
+          !isLargeGraph ||
+          labelsZoomedIn ||
+          isSelected ||
+          isHovered
+        )
 
         return (
           <Node3D
@@ -822,8 +920,8 @@ function GraphScene({
             node={node}
             positionsRef={positionsRef}
             isSelected={selectedNodeId === node.id || isEdgeEndpoint}
-            isHovered={hoveredNodeId === node.id}
-            isDimmed={isDimmedByEdge || isDimmedByNamespace}
+            isHovered={isHovered}
+            isDimmed={isDimmed}
             isClickable={isAddingEdge && selectedNodeId !== node.id}
             isRemovable={isRemovingNodes}
             hasHiddenNeighbors={hasHiddenNeighbors}
@@ -836,7 +934,7 @@ function GraphScene({
               onNodeContextMenu(node, e.nativeEvent.clientX, e.nativeEvent.clientY)
             } : undefined}
             isDragging={draggingNodeId === node.id}
-            showLabel={showLabels}
+            showLabel={shouldShowLabel}
           />
         )
       })}
@@ -1004,6 +1102,8 @@ export function ForceGraph3D({
   const activeLensId = lensResult.activeLensId
   const isAwaitingFocus = lensResult.isAwaitingFocus
   const lensFocusNodeId = lensResult.lensFocusNodeId
+  const clusteringEnabled = lensResult.clusteringEnabled
+  const clusteringDepth = lensResult.clusteringDepth
 
   // Create a map from groupId to group for quick lookup
   const groupsMap = useMemo(() => {
@@ -1353,11 +1453,24 @@ export function ForceGraph3D({
   const prevLensIdRef = useRef(activeLensId)
   useEffect(() => {
     if (activeLensId !== prevLensIdRef.current) {
+      console.log(`[ForceGraph3D] Lens changed from ${prevLensIdRef.current} to ${activeLensId}, resetting layoutReady`)
       prevLensIdRef.current = activeLensId
-      hasShownLayout.current = false
-      setLayoutReady(false)
+      
+      // Check if nodes already have positions (prevents "frozen" start)
+      const someHavePositions = lensedNodes.some(n => {
+        const pos = positionsRef.current.get(n.id)
+        return pos && !Number.isNaN(pos[0])
+      })
+      
+      if (someHavePositions) {
+        setLayoutReady(true)
+        hasShownLayout.current = true
+      } else {
+        hasShownLayout.current = false
+        setLayoutReady(false)
+      }
     }
-  }, [activeLensId])
+  }, [activeLensId, lensedNodes])
 
   if (allNodes.length === 0) {
     return (
@@ -1398,15 +1511,30 @@ export function ForceGraph3D({
   const displayNodes = isAwaitingFocus ? allNodes : lensedNodes
   const displayEdges = isAwaitingFocus ? allEdges : lensedEdges
   const displayLayout = isAwaitingFocus ? 'force' : activeLayout
+  const isLargeDisplayGraph = displayNodes.length >= INSTANCED_NODES_THRESHOLD
+  const canvasDpr: [number, number] = isLargeDisplayGraph ? [1, 1.25] : [1, 2]
 
   // Prevent browser context menu on the canvas to allow custom right-click handling
   const handleCanvasContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
   }, [])
 
+  // Final physics override from lens (if any)
+  const finalPhysics = useMemo(() => {
+    if (!physics) return undefined
+    const overrides: Partial<PhysicsParams> = {}
+    if (clusteringEnabled !== undefined) overrides.clusteringEnabled = clusteringEnabled
+    if (clusteringDepth !== undefined) overrides.clusteringDepth = clusteringDepth
+    return Object.keys(overrides).length > 0 ? { ...physics, ...overrides } : physics
+  }, [physics, clusteringEnabled, clusteringDepth])
+
   return (
     <div className="w-full h-full bg-[#0a0a0f] relative" onContextMenu={handleCanvasContextMenu}>
-      <Canvas camera={{ position: [0, 0, 30], fov: 60 }} onPointerMissed={() => { handleNodeSelect(null); onBackgroundClick?.() }}>
+      <Canvas
+        camera={{ position: [0, 0, 30], fov: 60 }}
+        dpr={canvasDpr}
+        onPointerMissed={() => { handleNodeSelect(null); onBackgroundClick?.() }}
+      >
         <GraphScene
           nodes={displayNodes}
           edges={displayEdges}
@@ -1423,7 +1551,7 @@ export function ForceGraph3D({
           initialCameraPosition={initialCameraPosition}
           initialCameraTarget={initialCameraTarget}
           onCameraChange={onCameraChange}
-          physics={physics}
+          physics={finalPhysics}
           isAddingEdge={isAddingEdge}
           isRemovingNodes={isRemovingNodes}
           nodesWithHiddenNeighbors={nodesWithHiddenNeighbors}

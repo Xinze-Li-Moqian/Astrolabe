@@ -48,6 +48,10 @@ coverage/
 *.tgz
 .turbo/
 
+# Local dev scripts
+run-dev.sh
+run-dev.bat
+
 # Sidecar binaries (built by PyInstaller)
 src-tauri/binaries/
 backend/dist/

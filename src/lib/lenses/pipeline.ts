@@ -130,6 +130,11 @@ export function applyLens(
     edges: aggregated.edges,
     groups: aggregated.groups,
     layout: lens.layout,
+    activeLensId: lensId,
+    isAwaitingFocus: false, // will be overridden by hook if needed
+    lensFocusNodeId: focusNodeId,
+    clusteringEnabled: lens.clusteringEnabled,
+    clusteringDepth: lens.clusteringDepth,
   }
 }
 

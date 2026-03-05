@@ -18,7 +18,6 @@ export {
   applyDamping,
   limitVelocity,
   isStable,
-  shouldUseBarnesHut,
   createWorkerHandler,
 } from './ForceLayout3DWorker'
 export type { PhysicsConfig, SimulationState } from './ForceLayout3DWorker'

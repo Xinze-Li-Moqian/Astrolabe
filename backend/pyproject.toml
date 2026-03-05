@@ -30,22 +30,16 @@ dependencies = [
     "POT>=0.9",  # Python Optimal Transport
 ]
 
-[project.optional-dependencies.topology]
-# Optional: Heavy dependencies for topological data analysis
-dependencies = [
+[project.optional-dependencies]
+topology = [
     "gudhi>=3.8",  # Betti numbers, persistent homology
     "giotto-tda>=0.6",  # TDA toolkit
     "kmapper>=2.0",  # Mapper algorithm
 ]
-
-[project.optional-dependencies.embedding]
-# Optional: Dependencies for graph embedding
-dependencies = [
+embedding = [
     "node2vec>=0.4",  # Node2Vec embedding
     "umap-learn>=0.5",  # UMAP embedding
 ]
-
-[project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
