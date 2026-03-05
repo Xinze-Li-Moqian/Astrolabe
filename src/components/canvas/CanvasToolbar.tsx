@@ -55,20 +55,6 @@ export function CanvasToolbar({
             </div>
 
             <button
-                onClick={onBuildLsp}
-                disabled={lspBuilding || graphLoading}
-                className={`p-1.5 rounded transition-colors disabled:opacity-50 ${namespaceCount > 0
-                    ? 'bg-green-900/60 hover:bg-green-800/60'
-                    : 'bg-black/60 hover:bg-white/20'
-                    }`}
-                title={namespaceCount > 0 ? `${namespaceCount} namespaces cached` : 'Load LSP'}
-            >
-                <span className={`text-xs font-mono ${lspBuilding ? 'animate-pulse' : ''} ${namespaceCount > 0 ? 'text-green-400' : 'text-white/60'}`}>
-                    LSP
-                </span>
-            </button>
-
-            <button
                 onClick={onRefresh}
                 disabled={graphLoading}
                 className="p-1.5 bg-black/60 hover:bg-white/20 rounded transition-colors disabled:opacity-50"
