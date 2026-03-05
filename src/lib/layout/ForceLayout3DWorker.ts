@@ -1146,8 +1146,9 @@ export function createWorkerHandler() {
         running = false
         break
 
-      case WorkerMessageType.UPDATE_PHYSICS:
+      case WorkerMessageType.UPDATE_PHYSICS: {
         if (!state) return
+        const prevPhysics = state.physics
         // Update physics config, namespace groups, and community assignments
         state.physics = { ...state.physics, ...data.physics }
         if (data.namespaceGroups !== undefined) {
@@ -1156,9 +1157,23 @@ export function createWorkerHandler() {
         if (data.nodeCommunities !== undefined) {
           state.nodeCommunities = data.nodeCommunities ? new Map<string, number>(data.nodeCommunities) : undefined
         }
+
+        // Instant reposition when clustering is toggled on
+        const newPhysics = state.physics
+        const { positions, velocities } = state
+
+        // When clustering data changes, clear velocities so physics can quickly re-settle
+        if (data.nodeCommunities !== undefined && state.nodeCommunities && state.nodeCommunities.size > 0) {
+          for (const [id] of velocities) {
+            const vel = velocities.get(id)
+            if (vel) { vel[0] = 0; vel[1] = 0; vel[2] = 0 }
+          }
+        }
+
         // Reset stability counter when physics changes
         stableFrames = 0
         break
+      }
     }
   }
 }

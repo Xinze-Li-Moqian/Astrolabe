@@ -66,7 +66,7 @@ export const DEFAULT_PHYSICS: PhysicsParams = {
   damping: 0.8,              // Slightly higher damping for stability
   // Namespace clustering defaults - DISABLED until base layout is robust
   clusteringEnabled: false,  // Was true - clustering can cause collapse
-  clusteringStrength: 0.1,   // Reduced from 0.2
+  clusteringStrength: 10,
   clusterSeparation: 0.3,    // Reduced from 0.5
   clusteringDepth: 1,
   // Density-adaptive defaults
@@ -78,10 +78,10 @@ export const DEFAULT_PHYSICS: PhysicsParams = {
   communitySameMultiplier: 0.2,  // Tighter same-cluster springs
   communityCrossMultiplier: 5.0,  // Stronger cross-cluster repulsion
   // Community clustering (direct forces)
-  communityClusteringStrength: 2.0,  // Max clustering strength
-  communitySeparation: 3.0,  // Strong separation between clusters
+  communityClusteringStrength: 10,
+  communitySeparation: 15.5,
   // Boundary constraint
-  boundaryRadius: 0,                 // 0 = disabled; UI slider can still enable it
+  boundaryRadius: 15,
   boundaryStrength: 2.0,
 }
 

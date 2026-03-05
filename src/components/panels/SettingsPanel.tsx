@@ -414,453 +414,90 @@ export function SettingsPanel(props: any) {
                                                         </div>
                                                         {!collapsedSections.has('layoutOptimization') && (
                                                         <div className="ml-5 mt-1">
-                                                        {/* Namespace Clustering */}
+                                                        {/* Clustering (collapsible) */}
                                                         <div className="mb-3">
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={physics.clusteringEnabled}
-                                                                    onChange={(e) => updatePhysicsUndoable({ ...physics, clusteringEnabled: e.target.checked })}
-                                                                    className="rounded bg-white/20 border-white/30 text-white/80 focus:ring-white/40"
-                                                                />
-                                                                <span className="text-xs text-white/80">Namespace Clustering</span>
-                                                                <button
-                                                                    onClick={() => setExpandedInfoTips(prev => {
-                                                                        const next = new Set(prev)
-                                                                        next.has('clustering') ? next.delete('clustering') : next.add('clustering')
-                                                                        return next
-                                                                    })}
-                                                                    className="ml-auto text-white/30 hover:text-white/60"
-                                                                >
-                                                                    <InformationCircleIcon className="w-3.5 h-3.5" />
-                                                                </button>
-                                                            </div>
-                                                            {physics.clusteringEnabled && (
-                                                                <div className="mt-2 ml-5 space-y-2">
-                                                                    <div>
+                                                            <button
+                                                                onClick={() => toggleSection('clustering')}
+                                                                className="flex items-center gap-2 py-1 text-white/60 hover:text-white/80 transition-colors"
+                                                            >
+                                                                <ChevronDownIcon className={`w-3 h-3 transition-transform ${collapsedSections.has('clustering') ? '-rotate-90' : ''}`} />
+                                                                <span className="text-xs font-medium text-white/80">Clustering</span>
+                                                            </button>
+                                                            {!collapsedSections.has('clustering') && (
+                                                            <div className="ml-5 mt-1 space-y-1.5">
+                                                                {([
+                                                                    { mode: 'namespace' as const, label: 'Namespace', available: true },
+                                                                    { mode: 'community' as const, label: 'Community', available: !!analysisData.communities },
+                                                                    { mode: 'layer' as const, label: 'Layer', available: !!analysisData.layers },
+                                                                    { mode: 'spectral' as const, label: 'Spectral', available: !!analysisData.spectralClusters },
+                                                                    { mode: 'embedding' as const, label: 'Embedding', available: !!analysisData.embeddingClusters },
+                                                                    { mode: 'curvature' as const, label: 'Curvature', available: !!analysisData.curvature },
+                                                                    { mode: 'anomaly' as const, label: 'Anomaly', available: !!analysisData.anomalies },
+                                                                    { mode: 'motif' as const, label: 'Motif', available: !!analysisData.dominantMotif },
+                                                                ]).map(({ mode, label, available }) => (
+                                                                    <label key={mode} className={`flex items-center gap-2 cursor-pointer ${!available ? 'opacity-30 pointer-events-none' : ''}`}>
+                                                                        <input
+                                                                            type="radio"
+                                                                            name="clusterMode"
+                                                                            checked={layoutClusterMode === mode}
+                                                                            disabled={!available}
+                                                                            onChange={() => {
+                                                                                if (layoutClusterMode === mode) {
+                                                                                    setLayoutClusterMode('none')
+                                                                                    updatePhysicsUndoable({ ...physics, clusteringEnabled: false, communityAwareLayout: false })
+                                                                                } else {
+                                                                                    setLayoutClusterMode(mode)
+                                                                                    updatePhysicsUndoable({
+                                                                                        ...physics,
+                                                                                        clusteringEnabled: mode === 'namespace',
+                                                                                        communityAwareLayout: mode !== 'namespace' && mode !== 'none',
+                                                                                    })
+                                                                                }
+                                                                            }}
+                                                                            className="bg-white/20 border-white/30 text-white/80 focus:ring-white/40"
+                                                                        />
+                                                                        <span className="text-xs text-white/80">{label}</span>
+                                                                    </label>
+                                                                ))}
+                                                                {layoutClusterMode !== 'none' && (
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            setLayoutClusterMode('none')
+                                                                            updatePhysicsUndoable({ ...physics, clusteringEnabled: false, communityAwareLayout: false })
+                                                                        }}
+                                                                        className="text-[9px] text-white/40 hover:text-white/60 ml-5"
+                                                                    >
+                                                                        Clear selection
+                                                                    </button>
+                                                                )}
+                                                                {layoutClusterMode !== 'none' && (
+                                                                    <div className="mt-2">
                                                                         <input
                                                                             type="range"
                                                                             min="0"
                                                                             max="10"
                                                                             step="0.5"
-                                                                            value={physics.clusteringStrength}
+                                                                            value={10 - (layoutClusterMode === 'namespace' ? physics.clusteringStrength : (physics.communityClusteringStrength ?? 2.0))}
                                                                             onChange={(e) => {
-                                                                                const intensity = Number(e.target.value)
-                                                                                updatePhysicsUndoable({
-                                                                                    ...physics,
-                                                                                    clusteringStrength: intensity,
-                                                                                    clusterSeparation: intensity * 1.5
-                                                                                })
+                                                                                const intensity = 10 - parseFloat(e.target.value)
+                                                                                if (layoutClusterMode === 'namespace') {
+                                                                                    updatePhysicsUndoable({ ...physics, clusteringStrength: intensity, clusterSeparation: intensity * 1.5 })
+                                                                                } else {
+                                                                                    updatePhysicsUndoable({ ...physics, communityClusteringStrength: intensity, communitySeparation: intensity * 1.5 + 0.5 })
+                                                                                }
                                                                             }}
                                                                             className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-white"
                                                                         />
                                                                         <div className="flex justify-between text-[9px] text-white/30 mt-1">
-                                                                            <span>Loose</span>
                                                                             <span>Clustered</span>
+                                                                            <span>Loose</span>
                                                                         </div>
                                                                     </div>
-                                                                    <div>
-                                                                        <label className="text-[10px] text-white/40 mb-1 block">Depth</label>
-                                                                        <select
-                                                                            value={physics.clusteringDepth}
-                                                                            onChange={(e) => updatePhysicsUndoable({ ...physics, clusteringDepth: Number(e.target.value) })}
-                                                                            className="w-full text-[10px] bg-white/10 border border-white/20 rounded px-2 py-1 text-white/80"
-                                                                        >
-                                                                            {namespaceDepthPreview.map(info => (
-                                                                                <option key={info.depth} value={info.depth}>
-                                                                                    Depth {info.depth} ({info.count} groups)
-                                                                                </option>
-                                                                            ))}
-                                                                            {namespaceDepthPreview.length === 0 && (
-                                                                                <option value={1}>No namespaces found</option>
-                                                                            )}
-                                                                        </select>
-                                                                        {/* Show full namespace list for selected depth - clickable to focus */}
-                                                                        {namespaceDepthPreview.find(d => d.depth === physics.clusteringDepth) && (
-                                                                            <div className="mt-2 p-2 bg-black/30 rounded text-[10px] max-h-24 overflow-y-auto">
-                                                                                {namespaceDepthPreview.find(d => d.depth === physics.clusteringDepth)!.namespaces.map((ns, i) => {
-                                                                                    const isOnCanvas = namespacesOnCanvas.has(ns)
-                                                                                    return (
-                                                                                        <button
-                                                                                            key={i}
-                                                                                            className={`block w-full text-left py-0.5 px-1 rounded transition-colors ${
-                                                                                                isOnCanvas
-                                                                                                    ? 'text-blue-400 hover:text-blue-300 hover:bg-blue-500/20'
-                                                                                                    : 'text-white/30 cursor-not-allowed'
-                                                                                            }`}
-                                                                                            onClick={() => isOnCanvas && handleNamespaceClick(ns)}
-                                                                                            disabled={!isOnCanvas}
-                                                                                            title={isOnCanvas ? `Focus on ${ns || '(root)'}` : 'No nodes on canvas'}
-                                                                                        >
-                                                                                            {isOnCanvas && <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 mr-1.5" />}
-                                                                                            {ns || '(root)'}
-                                                                                        </button>
-                                                                                    )
-                                                                                })}
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
+                                                                )}
+                                                            </div>
                                                             )}
                                                         </div>
 
-                                                        {/* Community Clustering */}
-                                                        <div className="mb-3">
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={layoutClusterMode === 'community'}
-                                                                    disabled={!analysisData.communities}
-                                                                    onChange={(e) => {
-                                                                        if (e.target.checked) {
-                                                                            setLayoutClusterMode('community')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: true })
-                                                                        } else {
-                                                                            setLayoutClusterMode('none')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: false })
-                                                                        }
-                                                                    }}
-                                                                    className="rounded bg-white/20 border-white/30 text-white/80 focus:ring-white/40 disabled:opacity-30"
-                                                                />
-                                                                <span className={`text-xs ${analysisData.communities ? 'text-white/80' : 'text-white/40'}`}>Community Clustering</span>
-                                                                <button
-                                                                    onClick={() => setExpandedInfoTips(prev => {
-                                                                        const next = new Set(prev)
-                                                                        next.has('communityClustering') ? next.delete('communityClustering') : next.add('communityClustering')
-                                                                        return next
-                                                                    })}
-                                                                    className="ml-auto text-white/30 hover:text-white/60"
-                                                                    title="Cluster by Louvain community detection"
-                                                                >
-                                                                    <InformationCircleIcon className="w-3.5 h-3.5" />
-                                                                </button>
-                                                            </div>
-                                                            {layoutClusterMode === 'community' && analysisData.communities && (
-                                                                <div className="mt-2 ml-5">
-                                                                    <input
-                                                                        type="range"
-                                                                        min="0"
-                                                                        max="4.0"
-                                                                        step="0.1"
-                                                                        value={physics.communityClusteringStrength ?? 0.3}
-                                                                        onChange={(e) => {
-                                                                            const intensity = parseFloat(e.target.value)
-                                                                            updatePhysicsUndoable({
-                                                                                ...physics,
-                                                                                communityClusteringStrength: intensity,
-                                                                                communitySeparation: intensity * 1.5 + 0.5
-                                                                            })
-                                                                        }}
-                                                                        className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-white"
-                                                                    />
-                                                                    <div className="flex justify-between text-[9px] text-white/30 mt-1">
-                                                                        <span>Loose</span>
-                                                                        <span>Clustered</span>
-                                                                    </div>
-                                                                </div>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Layer Clustering */}
-                                                        <div className="mb-3">
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={layoutClusterMode === 'layer'}
-                                                                    disabled={!analysisData.layers}
-                                                                    onChange={(e) => {
-                                                                        if (e.target.checked) {
-                                                                            setLayoutClusterMode('layer')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: true })
-                                                                        } else {
-                                                                            setLayoutClusterMode('none')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: false })
-                                                                        }
-                                                                    }}
-                                                                    className="rounded bg-white/20 border-white/30 text-white/80 focus:ring-white/40 disabled:opacity-30"
-                                                                />
-                                                                <span className={`text-xs ${analysisData.layers ? 'text-white/80' : 'text-white/40'}`}>Layer Clustering</span>
-                                                                <button
-                                                                    onClick={() => setExpandedInfoTips(prev => {
-                                                                        const next = new Set(prev)
-                                                                        next.has('layerClustering') ? next.delete('layerClustering') : next.add('layerClustering')
-                                                                        return next
-                                                                    })}
-                                                                    className="ml-auto text-white/30 hover:text-white/60"
-                                                                    title="Cluster by topological depth"
-                                                                >
-                                                                    <InformationCircleIcon className="w-3.5 h-3.5" />
-                                                                </button>
-                                                            </div>
-                                                            {layoutClusterMode === 'layer' && analysisData.layers && (
-                                                                <div className="mt-2 ml-5">
-                                                                    <input
-                                                                        type="range"
-                                                                        min="0"
-                                                                        max="4.0"
-                                                                        step="0.1"
-                                                                        value={physics.communityClusteringStrength ?? 0.3}
-                                                                        onChange={(e) => {
-                                                                            const intensity = parseFloat(e.target.value)
-                                                                            updatePhysicsUndoable({
-                                                                                ...physics,
-                                                                                communityClusteringStrength: intensity,
-                                                                                communitySeparation: intensity * 1.5 + 0.5
-                                                                            })
-                                                                        }}
-                                                                        className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-white"
-                                                                    />
-                                                                    <div className="flex justify-between text-[9px] text-white/30 mt-1">
-                                                                        <span>Loose</span>
-                                                                        <span>Clustered</span>
-                                                                    </div>
-                                                                </div>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Spectral Clustering */}
-                                                        <div className="mb-3">
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={layoutClusterMode === 'spectral'}
-                                                                    disabled={!analysisData.spectralClusters}
-                                                                    onChange={(e) => {
-                                                                        if (e.target.checked) {
-                                                                            setLayoutClusterMode('spectral')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: true })
-                                                                        } else {
-                                                                            setLayoutClusterMode('none')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: false })
-                                                                        }
-                                                                    }}
-                                                                    className="rounded bg-white/20 border-white/30 text-white/80 focus:ring-white/40 disabled:opacity-30"
-                                                                />
-                                                                <span className={`text-xs ${analysisData.spectralClusters ? 'text-white/80' : 'text-white/40'}`}>Spectral Clustering</span>
-                                                                <button
-                                                                    onClick={() => setExpandedInfoTips(prev => {
-                                                                        const next = new Set(prev)
-                                                                        next.has('spectralClustering') ? next.delete('spectralClustering') : next.add('spectralClustering')
-                                                                        return next
-                                                                    })}
-                                                                    className="ml-auto text-white/30 hover:text-white/60"
-                                                                    title="Cluster by graph Laplacian eigenvectors"
-                                                                >
-                                                                    <InformationCircleIcon className="w-3.5 h-3.5" />
-                                                                </button>
-                                                            </div>
-                                                            {layoutClusterMode === 'spectral' && analysisData.spectralClusters && (
-                                                                <div className="mt-2 ml-5">
-                                                                    <input
-                                                                        type="range"
-                                                                        min="0"
-                                                                        max="4.0"
-                                                                        step="0.1"
-                                                                        value={physics.communityClusteringStrength ?? 0.3}
-                                                                        onChange={(e) => {
-                                                                            const intensity = parseFloat(e.target.value)
-                                                                            updatePhysicsUndoable({
-                                                                                ...physics,
-                                                                                communityClusteringStrength: intensity,
-                                                                                communitySeparation: intensity * 1.5 + 0.5
-                                                                            })
-                                                                        }}
-                                                                        className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-white"
-                                                                    />
-                                                                    <div className="flex justify-between text-[9px] text-white/30 mt-1">
-                                                                        <span>Loose</span>
-                                                                        <span>Clustered</span>
-                                                                    </div>
-                                                                </div>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Embedding Clustering */}
-                                                        <div className="mb-3">
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={layoutClusterMode === 'embedding'}
-                                                                    disabled={!analysisData.embeddingClusters}
-                                                                    onChange={(e) => {
-                                                                        if (e.target.checked) {
-                                                                            setLayoutClusterMode('embedding')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: true })
-                                                                        } else {
-                                                                            setLayoutClusterMode('none')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: false })
-                                                                        }
-                                                                    }}
-                                                                    className="rounded bg-white/20 border-white/30 text-white/80 focus:ring-white/40 disabled:opacity-30"
-                                                                />
-                                                                <span className={`text-xs ${analysisData.embeddingClusters ? 'text-white/80' : 'text-white/40'}`}>Embedding Clustering</span>
-                                                            </div>
-                                                            {layoutClusterMode === 'embedding' && analysisData.embeddingClusters && (
-                                                                <div className="mt-2 ml-5">
-                                                                    <input
-                                                                        type="range"
-                                                                        min="0"
-                                                                        max="4.0"
-                                                                        step="0.1"
-                                                                        value={physics.communityClusteringStrength ?? 0.3}
-                                                                        onChange={(e) => {
-                                                                            const intensity = parseFloat(e.target.value)
-                                                                            updatePhysicsUndoable({
-                                                                                ...physics,
-                                                                                communityClusteringStrength: intensity,
-                                                                                communitySeparation: intensity * 1.5 + 0.5
-                                                                            })
-                                                                        }}
-                                                                        className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-white"
-                                                                    />
-                                                                    <div className="flex justify-between text-[9px] text-white/30 mt-1">
-                                                                        <span>Loose</span>
-                                                                        <span>Clustered</span>
-                                                                    </div>
-                                                                </div>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Curvature Clustering */}
-                                                        <div className="mb-3">
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={layoutClusterMode === 'curvature'}
-                                                                    disabled={!analysisData.curvature}
-                                                                    onChange={(e) => {
-                                                                        if (e.target.checked) {
-                                                                            setLayoutClusterMode('curvature')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: true })
-                                                                        } else {
-                                                                            setLayoutClusterMode('none')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: false })
-                                                                        }
-                                                                    }}
-                                                                    className="rounded bg-white/20 border-white/30 text-white/80 focus:ring-white/40 disabled:opacity-30"
-                                                                />
-                                                                <span className={`text-xs ${analysisData.curvature ? 'text-white/80' : 'text-white/40'}`}>Curvature Clustering</span>
-                                                            </div>
-                                                            {layoutClusterMode === 'curvature' && analysisData.curvature && (
-                                                                <div className="mt-2 ml-5">
-                                                                    <div className="text-[9px] text-white/40 mb-1">Groups: negative / neutral / positive</div>
-                                                                    <input
-                                                                        type="range"
-                                                                        min="0"
-                                                                        max="4.0"
-                                                                        step="0.1"
-                                                                        value={physics.communityClusteringStrength ?? 0.3}
-                                                                        onChange={(e) => {
-                                                                            const intensity = parseFloat(e.target.value)
-                                                                            updatePhysicsUndoable({
-                                                                                ...physics,
-                                                                                communityClusteringStrength: intensity,
-                                                                                communitySeparation: intensity * 1.5 + 0.5
-                                                                            })
-                                                                        }}
-                                                                        className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-white"
-                                                                    />
-                                                                    <div className="flex justify-between text-[9px] text-white/30 mt-1">
-                                                                        <span>Loose</span>
-                                                                        <span>Clustered</span>
-                                                                    </div>
-                                                                </div>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Anomaly Clustering */}
-                                                        <div className="mb-3">
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={layoutClusterMode === 'anomaly'}
-                                                                    disabled={!analysisData.anomalies}
-                                                                    onChange={(e) => {
-                                                                        if (e.target.checked) {
-                                                                            setLayoutClusterMode('anomaly')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: true })
-                                                                        } else {
-                                                                            setLayoutClusterMode('none')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: false })
-                                                                        }
-                                                                    }}
-                                                                    className="rounded bg-white/20 border-white/30 text-white/80 focus:ring-white/40 disabled:opacity-30"
-                                                                />
-                                                                <span className={`text-xs ${analysisData.anomalies ? 'text-white/80' : 'text-white/40'}`}>Anomaly Clustering</span>
-                                                            </div>
-                                                            {layoutClusterMode === 'anomaly' && analysisData.anomalies && (
-                                                                <div className="mt-2 ml-5">
-                                                                    <div className="text-[9px] text-white/40 mb-1">Groups: normal / anomaly</div>
-                                                                    <input
-                                                                        type="range"
-                                                                        min="0"
-                                                                        max="4.0"
-                                                                        step="0.1"
-                                                                        value={physics.communityClusteringStrength ?? 0.3}
-                                                                        onChange={(e) => {
-                                                                            const intensity = parseFloat(e.target.value)
-                                                                            updatePhysicsUndoable({
-                                                                                ...physics,
-                                                                                communityClusteringStrength: intensity,
-                                                                                communitySeparation: intensity * 1.5 + 0.5
-                                                                            })
-                                                                        }}
-                                                                        className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-white"
-                                                                    />
-                                                                    <div className="flex justify-between text-[9px] text-white/30 mt-1">
-                                                                        <span>Loose</span>
-                                                                        <span>Clustered</span>
-                                                                    </div>
-                                                                </div>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Motif Clustering */}
-                                                        <div className="mb-3">
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={layoutClusterMode === 'motif'}
-                                                                    disabled={!analysisData.dominantMotif}
-                                                                    onChange={(e) => {
-                                                                        if (e.target.checked) {
-                                                                            setLayoutClusterMode('motif')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: true })
-                                                                        } else {
-                                                                            setLayoutClusterMode('none')
-                                                                            updatePhysicsUndoable({ ...physics, communityAwareLayout: false })
-                                                                        }
-                                                                    }}
-                                                                    className="rounded bg-white/20 border-white/30 text-white/80 focus:ring-white/40 disabled:opacity-30"
-                                                                />
-                                                                <span className={`text-xs ${analysisData.dominantMotif ? 'text-white/80' : 'text-white/40'}`}>Motif Clustering</span>
-                                                            </div>
-                                                            {layoutClusterMode === 'motif' && analysisData.dominantMotif && (
-                                                                <div className="mt-2 ml-5">
-                                                                    <div className="text-[9px] text-white/40 mb-1">Groups: chain / fork / join / diamond</div>
-                                                                    <input
-                                                                        type="range"
-                                                                        min="0"
-                                                                        max="4.0"
-                                                                        step="0.1"
-                                                                        value={physics.communityClusteringStrength ?? 0.3}
-                                                                        onChange={(e) => {
-                                                                            const intensity = parseFloat(e.target.value)
-                                                                            updatePhysicsUndoable({
-                                                                                ...physics,
-                                                                                communityClusteringStrength: intensity,
-                                                                                communitySeparation: intensity * 1.5 + 0.5
-                                                                            })
-                                                                        }}
-                                                                        className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-white"
-                                                                    />
-                                                                    <div className="flex justify-between text-[9px] text-white/30 mt-1">
-                                                                        <span>Loose</span>
-                                                                        <span>Clustered</span>
-                                                                    </div>
-                                                                </div>
-                                                            )}
-                                                        </div>
 
                                                         {/* Adaptive Springs */}
                                                         <div className="mt-3">

@@ -66,14 +66,14 @@ const DEFAULT_PHYSICS: PhysicsConfig = {
   centerStrength: 0.05,
   damping: 0.8,
   clusteringEnabled: false,
-  clusteringStrength: 0.4,
-  clusterSeparation: 0,    // Barnes-Hut repulsion handles inter-cluster separation naturally
+  clusteringStrength: 10,
+  clusterSeparation: 15,
   clusteringDepth: 1,
   adaptiveSpringEnabled: true,
   adaptiveSpringMode: 'sqrt',
   adaptiveSpringScale: 0.5,
   communityAwareLayout: false,
-  boundaryRadius: 0,      // 0 = disabled; UI slider can still enable it
+  boundaryRadius: 15,
   boundaryStrength: 2.0,
 }
 
