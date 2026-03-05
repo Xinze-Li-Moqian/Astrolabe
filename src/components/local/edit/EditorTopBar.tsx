@@ -5,15 +5,12 @@ import {
     CodeBracketIcon,
     CubeIcon,
 } from '@heroicons/react/24/outline'
-import { LensIndicator } from '@/components/LensIndicator'
-
 export function EditorTopBar({
     projectName,
     searchPanelOpen,
     infoPanelOpen,
     codeViewerOpen,
     onHome,
-    onOpenLensPicker,
     onToggleSearchPanel,
     onToggleInfoPanel,
     onToggleCodeViewer,
@@ -30,7 +27,6 @@ export function EditorTopBar({
                 </button>
                 <span className="text-sm font-mono text-white/60 ml-2">{projectName}</span>
                 <div className="w-px h-4 bg-white/20 ml-2" />
-                <LensIndicator onOpenLensPicker={onOpenLensPicker} />
             </div>
             <div className="flex items-center gap-2">
                 <button

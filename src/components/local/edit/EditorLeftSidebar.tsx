@@ -45,16 +45,6 @@ export function EditorLeftSidebar({ ctx }: any) {
                 <div className="h-full flex flex-col bg-black border-r border-white/10">
                     <div className="flex border-b border-white/10 shrink-0">
                         <button
-                            onClick={() => setLeftPanelMode('search')}
-                            className={`flex-1 px-3 py-2.5 text-xs font-medium transition-colors ${
-                                leftPanelMode === 'search'
-                                    ? 'text-white/90 bg-white/5'
-                                    : 'text-white/40 hover:text-white/60'
-                            }`}
-                        >
-                            Search
-                        </button>
-                        <button
                             onClick={() => setLeftPanelMode('settings')}
                             className={`flex-1 px-3 py-2.5 text-xs font-medium transition-colors ${
                                 leftPanelMode === 'settings'
@@ -63,6 +53,16 @@ export function EditorLeftSidebar({ ctx }: any) {
                             }`}
                         >
                             Settings
+                        </button>
+                        <button
+                            onClick={() => setLeftPanelMode('search')}
+                            className={`flex-1 px-3 py-2.5 text-xs font-medium transition-colors ${
+                                leftPanelMode === 'search'
+                                    ? 'text-white/90 bg-white/5'
+                                    : 'text-white/40 hover:text-white/60'
+                            }`}
+                        >
+                            Search
                         </button>
                     </div>
 

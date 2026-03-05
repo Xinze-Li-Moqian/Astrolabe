@@ -7,6 +7,11 @@ import { ChevronDownIcon, FunnelIcon, CubeTransparentIcon, BoltIcon, ChartBarIco
 import MarkdownRenderer from '@/components/MarkdownRenderer'
 import { graphActions } from '@/lib/history/graphActions'
 import { DEFAULT_PHYSICS } from '@/components/graph3d/ForceLayout'
+import { LENSES, isLensAvailable } from '@/lib/lenses/presets'
+import { useLensStore, selectActiveLens } from '@/lib/lensStore'
+import { useLensActions } from '@/hooks/useLensedGraph'
+import { setLensOptionsUndoable } from '@/lib/history/lensActions'
+import type { LensOptions } from '@/lib/lenses/types'
 
     const statFormulaExplanations: Record<string, { title: string; content: string }> = {
         // Graph Statistics
@@ -240,6 +245,12 @@ export function SettingsPanel(props: any) {
         visibleNodes,
     } = props
 
+    const { setActiveLens } = useLensActions()
+    const activeLensId = useLensStore(state => state.activeLensId)
+    const activeLens = useLensStore(selectActiveLens)
+    const lensOptions = useLensStore(state => state.options)
+    const lensFocusNodeId = useLensStore(state => state.lensFocusNodeId)
+
     const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set(['graphSimplification', 'layoutOptimization', 'physics', 'analysis', 'actions']))
     const [expandedInfoTips, setExpandedInfoTips] = useState<Set<string>>(new Set())
     const [activeStatFormula, setActiveStatFormula] = useState<string | null>(null)
@@ -252,7 +263,7 @@ export function SettingsPanel(props: any) {
         })
     }, [])
 
-    const defaultSectionOrder = ['graphSimplification', 'layoutOptimization', 'physics', 'analysis', 'actions']
+    const defaultSectionOrder = ['lens', 'graphSimplification', 'layoutOptimization', 'physics', 'analysis', 'actions']
     const [sectionOrder, setSectionOrder] = useState<string[]>(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('astrolabe-section-order')
@@ -302,6 +313,147 @@ export function SettingsPanel(props: any) {
                                             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                                             <SortableContext items={sectionOrder} strategy={verticalListSortingStrategy}>
                                             <div className="h-full overflow-y-auto p-3 flex flex-col gap-4">
+                                                {/* === LENS === */}
+                                                <SortableSection id="lens" order={sectionOrder.indexOf('lens')}>
+                                                <div className="border-t border-white/10 pt-3">
+                                                    <div className="flex items-center gap-1 pr-5">
+                                                        <button
+                                                            onClick={() => toggleSection('lens')}
+                                                            className="flex items-center gap-2 py-1.5 text-white/60 hover:text-white/80 transition-colors group"
+                                                        >
+                                                            <ChevronDownIcon className={`w-3.5 h-3.5 transition-transform ${collapsedSections.has('lens') ? '-rotate-90' : ''}`} />
+                                                            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                                <circle cx="11" cy="11" r="8" />
+                                                                <path d="M21 21l-4.35-4.35" />
+                                                                <circle cx="11" cy="11" r="3" />
+                                                            </svg>
+                                                            <span className="text-[10px] uppercase tracking-wider font-medium">Lens</span>
+                                                        </button>
+                                                    </div>
+                                                    {!collapsedSections.has('lens') && (
+                                                    <div className="ml-5 mt-1 space-y-1">
+                                                        {LENSES.filter(lens => isLensAvailable(lens.id)).map(lens => {
+                                                            const isActive = lens.id === activeLensId
+                                                            return (
+                                                                <div key={lens.id}>
+                                                                <button
+                                                                    onClick={() => setActiveLens(lens.id)}
+                                                                    className={`w-full px-2.5 py-1.5 rounded-md text-left transition-colors flex items-center justify-between ${
+                                                                        isActive
+                                                                            ? 'bg-purple-600/30 text-white'
+                                                                            : 'text-white/60 hover:bg-white/5 hover:text-white/80'
+                                                                    }`}
+                                                                >
+                                                                    <div className="flex items-center gap-2 min-w-0">
+                                                                        <span className="text-xs font-medium truncate">{lens.name}</span>
+                                                                        {lens.requiresFocus && (
+                                                                            <span className="px-1 py-0.5 text-[9px] bg-white/10 text-white/40 rounded flex-shrink-0">
+                                                                                Focus
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <span className="text-[9px] text-white/30 uppercase flex-shrink-0">{lens.layout}</span>
+                                                                </button>
+                                                                {/* Per-lens settings (inline, shown when active) */}
+                                                                {isActive && (lens.settings?.length || lens.requiresFocus) && (
+                                                                    <div className="ml-3 mt-1 mb-2 pl-2.5 border-l border-purple-500/30 space-y-2">
+                                                                        {/* Focus node display */}
+                                                                        {lens.requiresFocus && (
+                                                                            <div>
+                                                                                <div className="text-[10px] text-white/40 mb-1">Focus Node</div>
+                                                                                <div className="flex items-center gap-2">
+                                                                                    <span className="text-[10px] text-white/70 font-mono truncate flex-1">
+                                                                                        {lensFocusNodeId ? lensFocusNodeId.split('.').slice(-2).join('.') : <span className="text-white/30 italic">None selected</span>}
+                                                                                    </span>
+                                                                                    <button
+                                                                                        onClick={() => useLensStore.setState({ lensFocusNodeId: null, activationState: 'awaiting-focus' })}
+                                                                                        className="px-1.5 py-0.5 text-[9px] bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 rounded transition-colors"
+                                                                                    >
+                                                                                        Change
+                                                                                    </button>
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+                                                                        {/* Lens-specific settings */}
+                                                                        {lens.settings?.map(setting => {
+                                                                            const currentValue = (lensOptions[setting.key] as number) ?? setting.min ?? 1
+                                                                            if (setting.type === 'slider') {
+                                                                                const steps = Array.from(
+                                                                                    { length: Math.floor(((setting.max ?? 10) - (setting.min ?? 1)) / (setting.step ?? 1)) + 1 },
+                                                                                    (_, i) => (setting.min ?? 1) + i * (setting.step ?? 1)
+                                                                                )
+                                                                                return (
+                                                                                    <div key={setting.key}>
+                                                                                        <div className="flex items-center justify-between mb-1">
+                                                                                            <span className="text-[10px] text-white/40">{setting.label}</span>
+                                                                                            <span className="text-[10px] text-white/70 font-mono">{currentValue}</span>
+                                                                                        </div>
+                                                                                        <div className="flex gap-1">
+                                                                                            {steps.map(v => (
+                                                                                                <button
+                                                                                                    key={v}
+                                                                                                    onClick={() => setLensOptionsUndoable({ [setting.key]: v }, String(setting.key))}
+                                                                                                    className={`flex-1 py-0.5 text-[10px] rounded transition-colors ${
+                                                                                                        currentValue === v
+                                                                                                            ? 'bg-purple-500/40 text-purple-200'
+                                                                                                            : 'bg-white/10 text-white/40 hover:bg-white/20 hover:text-white/60'
+                                                                                                    }`}
+                                                                                                >
+                                                                                                    {v}
+                                                                                                </button>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )
+                                                                            }
+                                                                            if (setting.type === 'select' && setting.options) {
+                                                                                return (
+                                                                                    <div key={setting.key}>
+                                                                                        <div className="text-[10px] text-white/40 mb-1">{setting.label}</div>
+                                                                                        <div className="flex gap-1 flex-wrap">
+                                                                                            {setting.options.map(opt => (
+                                                                                                <button
+                                                                                                    key={String(opt.value)}
+                                                                                                    onClick={() => setLensOptionsUndoable({ [setting.key]: opt.value }, String(setting.key))}
+                                                                                                    className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+                                                                                                        lensOptions[setting.key] === opt.value
+                                                                                                            ? 'bg-purple-500/40 text-purple-200'
+                                                                                                            : 'bg-white/10 text-white/40 hover:bg-white/20 hover:text-white/60'
+                                                                                                    }`}
+                                                                                                >
+                                                                                                    {opt.label}
+                                                                                                </button>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )
+                                                                            }
+                                                                            if (setting.type === 'toggle') {
+                                                                                const isOn = Boolean(lensOptions[setting.key])
+                                                                                return (
+                                                                                    <div key={setting.key} className="flex items-center justify-between">
+                                                                                        <span className="text-[10px] text-white/40">{setting.label}</span>
+                                                                                        <button
+                                                                                            onClick={() => setLensOptionsUndoable({ [setting.key]: !isOn }, String(setting.key))}
+                                                                                            className={`w-8 h-4 rounded-full transition-colors relative ${isOn ? 'bg-purple-500' : 'bg-white/20'}`}
+                                                                                        >
+                                                                                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${isOn ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                                                                                        </button>
+                                                                                    </div>
+                                                                                )
+                                                                            }
+                                                                            return null
+                                                                        })}
+                                                                    </div>
+                                                                )}
+                                                                </div>
+                                                            )
+                                                        })}
+                                                    </div>
+                                                    )}
+                                                </div>
+                                                </SortableSection>
+
                                                 {/* === GRAPH SIMPLIFICATION === */}
                                                 <SortableSection id="graphSimplification" order={sectionOrder.indexOf('graphSimplification')}>
                                                 <div className="border-t border-white/10 pt-3">
@@ -316,72 +468,75 @@ export function SettingsPanel(props: any) {
                                                         </button>
                                                     </div>
                                                     {!collapsedSections.has('graphSimplification') && (
-                                                    <div className="space-y-2 ml-5 mt-1">
+                                                    <div className="space-y-1 ml-5 mt-1">
                                                         {/* Hide Technical */}
-                                                        <div>
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={filterOptions.hideTechnical}
-                                                                    onChange={(e) => updateFilterOptionsUndoable({ ...filterOptions, hideTechnical: e.target.checked })}
-                                                                    className="rounded bg-white/20 border-white/30 text-white/80 focus:ring-white/40"
-                                                                />
-                                                                <span className="text-xs text-white/80">Hide Technical</span>
-                                                                <button
-                                                                    onClick={() => setExpandedInfoTips(prev => {
-                                                                        const next = new Set(prev)
-                                                                        next.has('hideTechnical') ? next.delete('hideTechnical') : next.add('hideTechnical')
-                                                                        return next
-                                                                    })}
-                                                                    className="ml-auto text-white/30 hover:text-white/60"
-                                                                >
-                                                                    <InformationCircleIcon className="w-3.5 h-3.5" />
-                                                                </button>
-                                                            </div>
+                                                        <div className="flex items-center">
+                                                            <button
+                                                                onClick={() => updateFilterOptionsUndoable({ ...filterOptions, hideTechnical: !filterOptions.hideTechnical })}
+                                                                className={`flex-1 px-2.5 py-1.5 rounded-md text-left transition-colors flex items-center ${
+                                                                    filterOptions.hideTechnical
+                                                                        ? 'bg-purple-600/30 text-white'
+                                                                        : 'text-white/60 hover:bg-white/5 hover:text-white/80'
+                                                                }`}
+                                                            >
+                                                                <span className="text-xs font-medium">Hide Technical</span>
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setExpandedInfoTips(prev => {
+                                                                    const next = new Set(prev)
+                                                                    next.has('hideTechnical') ? next.delete('hideTechnical') : next.add('hideTechnical')
+                                                                    return next
+                                                                })}
+                                                                className="ml-1 text-white/30 hover:text-white/60"
+                                                            >
+                                                                <InformationCircleIcon className="w-3.5 h-3.5" />
+                                                            </button>
                                                         </div>
                                                         {/* Transitive Reduction */}
-                                                        <div>
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={filterOptions.transitiveReduction ?? true}
-                                                                    onChange={(e) => updateFilterOptionsUndoable({ ...filterOptions, transitiveReduction: e.target.checked })}
-                                                                    className="rounded bg-white/20 border-white/30 text-white/80 focus:ring-white/40"
-                                                                />
-                                                                <span className="text-xs text-white/80">Transitive Reduction</span>
-                                                                <button
-                                                                    onClick={() => setExpandedInfoTips(prev => {
-                                                                        const next = new Set(prev)
-                                                                        next.has('transitiveReduction') ? next.delete('transitiveReduction') : next.add('transitiveReduction')
-                                                                        return next
-                                                                    })}
-                                                                    className="ml-auto text-white/30 hover:text-white/60"
-                                                                >
-                                                                    <InformationCircleIcon className="w-3.5 h-3.5" />
-                                                                </button>
-                                                            </div>
+                                                        <div className="flex items-center">
+                                                            <button
+                                                                onClick={() => updateFilterOptionsUndoable({ ...filterOptions, transitiveReduction: !(filterOptions.transitiveReduction ?? true) })}
+                                                                className={`flex-1 px-2.5 py-1.5 rounded-md text-left transition-colors flex items-center ${
+                                                                    (filterOptions.transitiveReduction ?? true)
+                                                                        ? 'bg-purple-600/30 text-white'
+                                                                        : 'text-white/60 hover:bg-white/5 hover:text-white/80'
+                                                                }`}
+                                                            >
+                                                                <span className="text-xs font-medium">Transitive Reduction</span>
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setExpandedInfoTips(prev => {
+                                                                    const next = new Set(prev)
+                                                                    next.has('transitiveReduction') ? next.delete('transitiveReduction') : next.add('transitiveReduction')
+                                                                    return next
+                                                                })}
+                                                                className="ml-1 text-white/30 hover:text-white/60"
+                                                            >
+                                                                <InformationCircleIcon className="w-3.5 h-3.5" />
+                                                            </button>
                                                         </div>
                                                         {/* Hide Orphaned */}
-                                                        <div>
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={filterOptions.hideOrphaned ?? false}
-                                                                    onChange={(e) => updateFilterOptionsUndoable({ ...filterOptions, hideOrphaned: e.target.checked })}
-                                                                    className="rounded bg-white/20 border-white/30 text-white/80 focus:ring-white/40"
-                                                                />
-                                                                <span className="text-xs text-white/80">Hide Orphaned</span>
-                                                                <button
-                                                                    onClick={() => setExpandedInfoTips(prev => {
-                                                                        const next = new Set(prev)
-                                                                        next.has('hideOrphaned') ? next.delete('hideOrphaned') : next.add('hideOrphaned')
-                                                                        return next
-                                                                    })}
-                                                                    className="ml-auto text-white/30 hover:text-white/60"
-                                                                >
-                                                                    <InformationCircleIcon className="w-3.5 h-3.5" />
-                                                                </button>
-                                                            </div>
+                                                        <div className="flex items-center">
+                                                            <button
+                                                                onClick={() => updateFilterOptionsUndoable({ ...filterOptions, hideOrphaned: !(filterOptions.hideOrphaned ?? false) })}
+                                                                className={`flex-1 px-2.5 py-1.5 rounded-md text-left transition-colors flex items-center ${
+                                                                    (filterOptions.hideOrphaned ?? false)
+                                                                        ? 'bg-purple-600/30 text-white'
+                                                                        : 'text-white/60 hover:bg-white/5 hover:text-white/80'
+                                                                }`}
+                                                            >
+                                                                <span className="text-xs font-medium">Hide Orphaned</span>
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setExpandedInfoTips(prev => {
+                                                                    const next = new Set(prev)
+                                                                    next.has('hideOrphaned') ? next.delete('hideOrphaned') : next.add('hideOrphaned')
+                                                                    return next
+                                                                })}
+                                                                className="ml-1 text-white/30 hover:text-white/60"
+                                                            >
+                                                                <InformationCircleIcon className="w-3.5 h-3.5" />
+                                                            </button>
                                                         </div>
                                                     </div>
                                                     )}
@@ -434,31 +589,36 @@ export function SettingsPanel(props: any) {
                                                                     { mode: 'curvature' as const, label: 'Curvature', available: !!analysisData.curvature },
                                                                     { mode: 'anomaly' as const, label: 'Anomaly', available: !!analysisData.anomalies },
                                                                     { mode: 'motif' as const, label: 'Motif', available: !!analysisData.dominantMotif },
-                                                                ]).map(({ mode, label, available }) => (
-                                                                    <label key={mode} className={`flex items-center gap-2 cursor-pointer ${!available ? 'opacity-30 pointer-events-none' : ''}`}>
-                                                                        <input
-                                                                            type="radio"
-                                                                            name="clusterMode"
-                                                                            checked={layoutClusterMode === mode}
-                                                                            disabled={!available}
-                                                                            onChange={() => {
-                                                                                if (layoutClusterMode === mode) {
-                                                                                    setLayoutClusterMode('none')
-                                                                                    updatePhysicsUndoable({ ...physics, clusteringEnabled: false, communityAwareLayout: false })
-                                                                                } else {
-                                                                                    setLayoutClusterMode(mode)
-                                                                                    updatePhysicsUndoable({
-                                                                                        ...physics,
-                                                                                        clusteringEnabled: mode === 'namespace',
-                                                                                        communityAwareLayout: mode !== 'namespace' && mode !== 'none',
-                                                                                    })
-                                                                                }
-                                                                            }}
-                                                                            className="bg-white/20 border-white/30 text-white/80 focus:ring-white/40"
-                                                                        />
-                                                                        <span className="text-xs text-white/80">{label}</span>
-                                                                    </label>
-                                                                ))}
+                                                                ]).map(({ mode, label, available }) => {
+                                                                    const isActive = layoutClusterMode === mode
+                                                                    return (
+                                                                    <button
+                                                                        key={mode}
+                                                                        disabled={!available}
+                                                                        onClick={() => {
+                                                                            if (isActive) {
+                                                                                setLayoutClusterMode('none')
+                                                                                updatePhysicsUndoable({ ...physics, clusteringEnabled: false, communityAwareLayout: false })
+                                                                            } else {
+                                                                                setLayoutClusterMode(mode)
+                                                                                updatePhysicsUndoable({
+                                                                                    ...physics,
+                                                                                    clusteringEnabled: mode === 'namespace',
+                                                                                    communityAwareLayout: mode !== 'namespace' && mode !== 'none',
+                                                                                })
+                                                                            }
+                                                                        }}
+                                                                        className={`w-full px-2.5 py-1.5 rounded-md text-left transition-colors flex items-center justify-between ${
+                                                                            !available ? 'opacity-30 cursor-not-allowed' :
+                                                                            isActive
+                                                                                ? 'bg-purple-600/30 text-white'
+                                                                                : 'text-white/60 hover:bg-white/5 hover:text-white/80'
+                                                                        }`}
+                                                                    >
+                                                                        <span className="text-xs font-medium">{label}</span>
+                                                                    </button>
+                                                                    )
+                                                                })}
                                                                 {layoutClusterMode !== 'none' && (
                                                                     <button
                                                                         onClick={() => {
@@ -494,6 +654,48 @@ export function SettingsPanel(props: any) {
                                                                         </div>
                                                                     </div>
                                                                 )}
+                                                                {/* Namespace depth selector */}
+                                                                {layoutClusterMode === 'namespace' && namespaceDepthPreview.length > 0 && (
+                                                                    <div className="mt-2 space-y-1.5">
+                                                                        <div>
+                                                                            <label className="text-[10px] text-white/40 mb-1 block">Depth</label>
+                                                                            <select
+                                                                                value={physics.clusteringDepth}
+                                                                                onChange={(e) => updatePhysicsUndoable({ ...physics, clusteringDepth: Number(e.target.value) })}
+                                                                                className="w-full text-[10px] bg-white/10 border border-white/20 rounded px-2 py-1 text-white/80"
+                                                                            >
+                                                                                {namespaceDepthPreview.map(info => (
+                                                                                    <option key={info.depth} value={info.depth}>
+                                                                                        Depth {info.depth} ({info.count} groups)
+                                                                                    </option>
+                                                                                ))}
+                                                                            </select>
+                                                                        </div>
+                                                                        {namespaceDepthPreview.find(d => d.depth === physics.clusteringDepth) && (
+                                                                            <div className="p-2 bg-black/30 rounded text-[10px] max-h-24 overflow-y-auto">
+                                                                                {namespaceDepthPreview.find(d => d.depth === physics.clusteringDepth)!.namespaces.map((ns, i) => {
+                                                                                    const isOnCanvas = namespacesOnCanvas.has(ns)
+                                                                                    return (
+                                                                                        <button
+                                                                                            key={i}
+                                                                                            className={`block w-full text-left py-0.5 px-1 rounded transition-colors ${
+                                                                                                isOnCanvas
+                                                                                                    ? 'text-blue-400 hover:text-blue-300 hover:bg-blue-500/20'
+                                                                                                    : 'text-white/30 cursor-not-allowed'
+                                                                                            }`}
+                                                                                            onClick={() => isOnCanvas && handleNamespaceClick(ns)}
+                                                                                            disabled={!isOnCanvas}
+                                                                                            title={isOnCanvas ? `Focus on ${ns || '(root)'}` : 'No nodes on canvas'}
+                                                                                        >
+                                                                                            {isOnCanvas && <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 mr-1.5" />}
+                                                                                            {ns || '(root)'}
+                                                                                        </button>
+                                                                                    )
+                                                                                })}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                             )}
                                                         </div>
@@ -501,38 +703,51 @@ export function SettingsPanel(props: any) {
 
                                                         {/* Adaptive Springs */}
                                                         <div className="mt-3">
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={physics.adaptiveSpringEnabled}
-                                                                    onChange={(e) => updatePhysicsUndoable({ ...physics, adaptiveSpringEnabled: e.target.checked })}
-                                                                    className="rounded bg-white/20 border-white/30 text-white/80 focus:ring-white/40"
-                                                                />
-                                                                <span className="text-xs text-white/80">Adaptive Springs</span>
+                                                            <div className="flex items-center">
+                                                                <button
+                                                                    onClick={() => updatePhysicsUndoable({ ...physics, adaptiveSpringEnabled: !physics.adaptiveSpringEnabled })}
+                                                                    className={`flex-1 px-2.5 py-1.5 rounded-md text-left transition-colors flex items-center ${
+                                                                        physics.adaptiveSpringEnabled
+                                                                            ? 'bg-purple-600/30 text-white'
+                                                                            : 'text-white/60 hover:bg-white/5 hover:text-white/80'
+                                                                    }`}
+                                                                >
+                                                                    <span className="text-xs font-medium">Adaptive Springs</span>
+                                                                </button>
                                                                 <button
                                                                     onClick={() => setExpandedInfoTips(prev => {
                                                                         const next = new Set(prev)
                                                                         next.has('adaptiveSprings') ? next.delete('adaptiveSprings') : next.add('adaptiveSprings')
                                                                         return next
                                                                     })}
-                                                                    className="ml-auto text-white/30 hover:text-white/60"
+                                                                    className="ml-1 text-white/30 hover:text-white/60"
                                                                 >
                                                                     <InformationCircleIcon className="w-3.5 h-3.5" />
                                                                 </button>
                                                             </div>
                                                             {physics.adaptiveSpringEnabled && (
                                                                 <div className="mt-2 ml-5 space-y-2">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className="text-[10px] text-white/40 w-14">Mode</span>
-                                                                        <select
-                                                                            value={physics.adaptiveSpringMode}
-                                                                            onChange={(e) => updatePhysicsUndoable({ ...physics, adaptiveSpringMode: e.target.value as 'sqrt' | 'logarithmic' | 'linear' })}
-                                                                            className="flex-1 text-[10px] bg-white/10 border border-white/20 rounded px-2 py-0.5 text-white/80"
-                                                                        >
-                                                                            <option value="sqrt">Square Root</option>
-                                                                            <option value="logarithmic">Logarithmic</option>
-                                                                            <option value="linear">Linear</option>
-                                                                        </select>
+                                                                    <div>
+                                                                        <span className="text-[10px] text-white/40 mb-1 block">Mode</span>
+                                                                        <div className="space-y-0.5">
+                                                                            {([
+                                                                                { value: 'sqrt', label: 'Square Root' },
+                                                                                { value: 'logarithmic', label: 'Logarithmic' },
+                                                                                { value: 'linear', label: 'Linear' },
+                                                                            ] as const).map(({ value, label }) => (
+                                                                                <button
+                                                                                    key={value}
+                                                                                    onClick={() => updatePhysicsUndoable({ ...physics, adaptiveSpringMode: value })}
+                                                                                    className={`w-full px-2 py-1 rounded text-left text-[10px] transition-colors ${
+                                                                                        physics.adaptiveSpringMode === value
+                                                                                            ? 'bg-purple-600/30 text-white'
+                                                                                            : 'text-white/50 hover:bg-white/5 hover:text-white/70'
+                                                                                    }`}
+                                                                                >
+                                                                                    {label}
+                                                                                </button>
+                                                                            ))}
+                                                                        </div>
                                                                     </div>
                                                                     <div className="flex items-center gap-2">
                                                                         <span className="text-[10px] text-white/40 w-14">Scale</span>

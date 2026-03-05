@@ -1,6 +1,5 @@
 // @ts-nocheck
 import { CustomNodeDialog, ResetConfirmDialog, ReloadPromptDialog, ClearCanvasDialog } from '@/components/dialogs/EditorDialogs'
-import { LensPicker } from '@/components/LensPicker'
 
 export function EditorOverlays({ ctx }: any) {
     const {
@@ -23,8 +22,6 @@ export function EditorOverlays({ ctx }: any) {
         deselectAllNodesToRemove,
         removeSelectedNodes,
         clearAllNodes,
-        isLensPickerOpen,
-        closeLensPicker,
         lspStatus,
         lspBuilding,
     } = ctx
@@ -63,12 +60,6 @@ export function EditorOverlays({ ctx }: any) {
                 deselectAllNodesToRemove={deselectAllNodesToRemove}
                 removeSelectedNodes={removeSelectedNodes}
                 clearAllNodes={clearAllNodes}
-            />
-
-            <LensPicker
-                isOpen={isLensPickerOpen}
-                onClose={closeLensPicker}
-                nodeCount={canvasNodes.length}
             />
 
             {lspStatus && (

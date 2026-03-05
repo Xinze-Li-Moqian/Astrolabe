@@ -30,7 +30,6 @@ import { updateViewport } from '@/lib/api'
 import type { PhysicsParams } from '@/components/graph3d/ForceGraph3D'
 import { DEFAULT_PHYSICS } from '@/components/graph3d/ForceLayout'
 
-import { useLensPickerShortcut } from '@/hooks/useLensPickerShortcut'
 import { useLensStore } from '@/lib/lensStore'
 
 import { useUndoShortcut } from '@/hooks/useUndoShortcut'
@@ -57,7 +56,7 @@ function LocalEditorContent() {
     const [infoPanelOpen, setInfoPanelOpen] = useState(true)
     const [searchPanelOpen, setSearchPanelOpen] = useState(true)
     const [searchPanelKey, setSearchPanelKey] = useState(0)
-    const [leftPanelMode, setLeftPanelMode] = useState<'search' | 'settings'>('search')
+    const [leftPanelMode, setLeftPanelMode] = useState<'search' | 'settings'>('settings')
     const [viewMode, setViewMode] = useState<ViewMode>('3d')
     const [toolPanelView, setToolPanelView] = useState<'edges' | 'notes' | 'style' | 'neighbors' | null>(null)
 
@@ -78,9 +77,6 @@ function LocalEditorContent() {
 
     // ── Physics settings ──
     const [physics, setPhysics] = useState<PhysicsParams>({ ...DEFAULT_PHYSICS })
-
-    // ── Lens picker (Cmd+K) ──
-    const { isOpen: isLensPickerOpen, open: openLensPicker, close: closeLensPicker } = useLensPickerShortcut()
 
     // ── Undo/Redo ──
     useUndoShortcut()
@@ -418,7 +414,6 @@ function LocalEditorContent() {
                 infoPanelOpen={infoPanelOpen}
                 codeViewerOpen={codeViewer.codeViewerOpen}
                 onHome={goHome}
-                onOpenLensPicker={openLensPicker}
                 onToggleSearchPanel={() => setSearchPanelOpen(!searchPanelOpen)}
                 onToggleInfoPanel={() => setInfoPanelOpen(!infoPanelOpen)}
                 onToggleCodeViewer={handleToggleCodeViewer}
@@ -564,8 +559,6 @@ function LocalEditorContent() {
                     deselectAllNodesToRemove,
                     removeSelectedNodes,
                     clearAllNodes,
-                    isLensPickerOpen,
-                    closeLensPicker,
                     lspStatus,
                     lspBuilding,
                 }}
