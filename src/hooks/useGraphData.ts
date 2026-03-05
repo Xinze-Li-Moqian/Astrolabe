@@ -8,7 +8,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
-import { loadProject, refreshProject, checkProjectStatus, type ProjectStatus } from '@/lib/api'
+import { loadProject, getProject, refreshProject, checkProjectStatus, type ProjectStatus } from '@/lib/api'
 import type { Node, Edge } from '@/types/node'
 import type {
   AstrolabeNode,
@@ -23,6 +23,8 @@ import {
   type GraphFilterOptions,
   DEFAULT_FILTER_OPTIONS,
 } from '@/lib/graphProcessing'
+import { profiler } from '@/lib/profiler'
+import { history } from '@/lib/history'
 
 // Re-export types for backward compatibility
 export type { GraphNode, GraphLink } from '@/types/graph'
@@ -212,11 +214,13 @@ export function useGraphData(projectPath: string): GraphData {
     }
   }, [projectPath])
 
-  // Meta refresh: only reload data, don't reset state
+  // Meta refresh: use getProject (GET) instead of loadProject (POST) for lighter reload
+  // This avoids re-parsing the project on the backend
   const reloadMeta = useCallback(async () => {
     if (!projectPath) return
     try {
-      const response = await loadProject(projectPath)
+      // Use getProject (GET) instead of loadProject (POST) - much lighter
+      const response = await getProject(projectPath)
 
       const astrolabeNodes = response.nodes.map(backendNodeToAstrolabe)
       const astrolabeEdges = response.edges.map(backendEdgeToAstrolabe)
@@ -231,9 +235,21 @@ export function useGraphData(projectPath: string): GraphData {
   }, [projectPath])
 
   // WebSocket file change monitoring
+  // Clear undo history on external changes (patches may no longer apply)
+  // But skip clearing if we're suppressing (recent undo/redo/execute) - those are our own writes
   useFileWatch(projectPath, {
-    onRefresh: reload,       // .ilean changes → full reload
-    onMetaRefresh: reloadMeta, // meta.json changes → only refresh meta
+    onRefresh: () => {
+      if (!history.suppressingFileWatchEvents) {
+        history.clear('External file change (Lean source)')
+      }
+      reload()
+    },
+    onMetaRefresh: () => {
+      if (!history.suppressingFileWatchEvents) {
+        history.clear('External file change (meta.json)')
+      }
+      reloadMeta()
+    },
   })
 
   // ============================================
@@ -241,7 +257,12 @@ export function useGraphData(projectPath: string): GraphData {
   // ============================================
   const { nodes, edges, stats: filterStats } = useMemo(
     () => {
+      const t0 = performance.now()
       const result = processGraph(rawNodes, rawEdges, filterOptions)
+      profiler.recordOneShot('graph.processGraph', performance.now() - t0, {
+        inputNodes: rawNodes.length,
+        outputNodes: result.nodes.length,
+      })
       const hasChanges = result.stats.removedNodes > 0 ||
         result.stats.orphanedNodes > 0 ||
         result.stats.transitiveEdgesRemoved > 0

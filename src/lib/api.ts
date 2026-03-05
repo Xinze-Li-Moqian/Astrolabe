@@ -23,6 +23,7 @@ function isTauri(): boolean {
 // Cache for Tauri HTTP fetch function
 let cachedTauriFetch: typeof fetch | null = null;
 let tauriFetchInitialized = false;
+let warnedTauriHttpPermission = false;
 
 /**
  * Initialize Tauri HTTP fetch (called once)
@@ -62,7 +63,11 @@ async function tauriFetch(
     try {
       return await tauriHttp(input, init);
     } catch (error) {
-      console.warn("[API] Tauri HTTP request failed, falling back to standard fetch:", error);
+      // Only warn once to avoid spamming console
+      if (!warnedTauriHttpPermission) {
+        warnedTauriHttpPermission = true;
+        console.warn("[API] Tauri HTTP request failed, falling back to standard fetch:", error);
+      }
     }
   }
 
@@ -469,6 +474,21 @@ export interface FilterOptionsData {
   transitiveReduction: boolean;
 }
 
+export interface PhysicsSettingsData {
+  repulsionStrength?: number;
+  springLength?: number;
+  springStrength?: number;
+  centerStrength?: number;
+  damping?: number;
+  clusteringEnabled?: boolean;
+  clusteringStrength?: number;
+  clusterSeparation?: number;
+  clusteringDepth?: number;
+  adaptiveSpringEnabled?: boolean;
+  adaptiveSpringMode?: string;
+  adaptiveSpringScale?: number;
+}
+
 export interface ViewportData {
   camera_position: [number, number, number];
   camera_target: [number, number, number];
@@ -476,6 +496,7 @@ export interface ViewportData {
   selected_node_id?: string;
   selected_edge_id?: string;
   filter_options?: FilterOptionsData;
+  physics_settings?: PhysicsSettingsData;
 }
 
 /**
@@ -563,6 +584,77 @@ export async function updateMacros(
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(error.detail || `Failed to update macros: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+// ============================================
+// Namespace Index API
+// ============================================
+
+export interface NamespaceLocation {
+  name: string;
+  file_path: string;
+  line_number: number;
+  is_explicit: boolean | null;
+}
+
+/**
+ * Get cached namespace index for a project
+ * Returns locations for all namespaces from .astrolabe/namespace_index.json
+ */
+export async function getNamespaceIndex(
+  projectPath: string
+): Promise<{ namespaces: NamespaceLocation[] }> {
+  const res = await tauriFetch(
+    `${API_BASE}/api/project/namespace-index?path=${encodeURIComponent(projectPath)}`
+  );
+
+  if (!res.ok) {
+    // If no index exists, return empty array
+    return { namespaces: [] };
+  }
+
+  return res.json();
+}
+
+/**
+ * Build and save namespace index using LSP
+ * This scans all files and extracts namespace declaration locations.
+ * May take some time for large projects.
+ */
+export async function buildNamespaceIndex(
+  projectPath: string
+): Promise<{ status: string; count: number; file_count: number; built_at: string }> {
+  const res = await tauriFetch(
+    `${API_BASE}/api/project/namespace-index/build?path=${encodeURIComponent(projectPath)}`,
+    { method: "POST" }
+  );
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(error.detail || `Failed to build namespace index: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+/**
+ * Get declaration location for a single namespace
+ * Uses cached index if available, falls back to LSP query
+ */
+export async function getNamespaceDeclaration(
+  projectPath: string,
+  namespace: string
+): Promise<NamespaceLocation | null> {
+  const res = await tauriFetch(
+    `${API_BASE}/api/project/namespace-declaration?` +
+    `path=${encodeURIComponent(projectPath)}&namespace=${encodeURIComponent(namespace)}`
+  );
+
+  if (!res.ok) {
+    return null;
   }
 
   return res.json();

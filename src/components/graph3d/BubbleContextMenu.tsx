@@ -1,0 +1,187 @@
+'use client'
+
+/**
+ * BubbleContextMenu - Right-click context menu for namespace bubble nodes
+ *
+ * Provides actions for expanding, collapsing, focusing, and showing all nodes
+ * in a namespace group. Includes performance warnings for large groups.
+ */
+
+import { useCallback } from 'react'
+import { useLensActions } from '@/hooks/useLensedGraph'
+import { clearExpandedGroupsUndoable } from '@/lib/history/lensActions'
+
+export interface BubbleContextMenuProps {
+  // Position
+  x: number
+  y: number
+
+  // Group info
+  groupId: string
+  namespace: string
+  nodeCount: number
+  nodeIds: string[]
+  isExpanded: boolean
+
+  // Callbacks
+  onClose: () => void
+  onJumpToCode?: (nodeId: string) => void
+  onJumpToNamespace?: (namespace: string) => void  // LSP-based namespace declaration jump
+}
+
+// Warning threshold for "Show All" action
+const SHOW_ALL_WARNING_THRESHOLD = 100
+
+export function BubbleContextMenu({
+  x,
+  y,
+  groupId,
+  namespace,
+  nodeCount,
+  nodeIds,
+  isExpanded,
+  onClose,
+  onJumpToCode,
+  onJumpToNamespace,
+}: BubbleContextMenuProps) {
+  // Use undoable actions for Cmd+Z support
+  const { toggleGroupExpanded, setLensFocusNode, setActiveLens } = useLensActions()
+
+  // Expand this group (shows sub-namespace bubbles)
+  const handleExpand = useCallback(() => {
+    toggleGroupExpanded(groupId)
+    onClose()
+  }, [groupId, toggleGroupExpanded, onClose])
+
+  // Collapse this group
+  const handleCollapse = useCallback(() => {
+    toggleGroupExpanded(groupId)
+    onClose()
+  }, [groupId, toggleGroupExpanded, onClose])
+
+  // Focus on this namespace (switch to ego lens centered on a representative node)
+  const handleFocus = useCallback(() => {
+    // For now, just close - we'll need the actual node IDs to implement this properly
+    // TODO: Pass in a representative nodeId from the group
+    onClose()
+  }, [onClose])
+
+  // Show all nodes (with warning for large groups)
+  const handleShowAll = useCallback(() => {
+    if (nodeCount > SHOW_ALL_WARNING_THRESHOLD) {
+      const confirmed = window.confirm(
+        `This namespace contains ${nodeCount} nodes. Showing all may cause performance issues. Continue?`
+      )
+      if (!confirmed) {
+        onClose()
+        return
+      }
+    }
+    // Switch to full lens to show everything
+    setActiveLens('full')
+    onClose()
+  }, [nodeCount, setActiveLens, onClose])
+
+  // Collapse all - reset to top-level namespace bubbles
+  const handleCollapseAll = useCallback(() => {
+    clearExpandedGroupsUndoable()
+    onClose()
+  }, [onClose])
+
+  // Jump to code - navigate to namespace declaration (via LSP) or first node's file (fallback)
+  const handleJumpToCode = useCallback(() => {
+    // Prefer LSP-based namespace declaration for accurate positioning
+    if (onJumpToNamespace) {
+      onJumpToNamespace(namespace)
+    } else if (onJumpToCode && nodeIds.length > 0) {
+      // Fallback to first node's file
+      onJumpToCode(nodeIds[0])
+    }
+    onClose()
+  }, [onJumpToNamespace, onJumpToCode, namespace, nodeIds, onClose])
+
+  // Get last segment of namespace for display
+  const shortName = namespace.split('.').pop() || namespace
+
+  return (
+    <div
+      className="fixed z-50 bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[180px]"
+      style={{ left: x, top: y }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Header */}
+      <div className="px-3 py-2 border-b border-gray-700">
+        <div className="text-sm font-medium text-white truncate max-w-[200px]">
+          {shortName}
+        </div>
+        <div className="text-xs text-gray-400">
+          {nodeCount} {nodeCount === 1 ? 'node' : 'nodes'}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="py-1">
+        {!isExpanded ? (
+          <button
+            onClick={handleExpand}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800 hover:text-white flex items-center gap-2"
+          >
+            <span className="text-gray-500">▶</span>
+            Expand
+          </button>
+        ) : (
+          <button
+            onClick={handleCollapse}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800 hover:text-white flex items-center gap-2"
+          >
+            <span className="text-gray-500">▼</span>
+            Collapse
+          </button>
+        )}
+
+        {(onJumpToNamespace || (onJumpToCode && nodeIds.length > 0)) && (
+          <button
+            onClick={handleJumpToCode}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800 hover:text-white flex items-center gap-2"
+          >
+            <span className="text-gray-500">📄</span>
+            Jump to Code
+          </button>
+        )}
+
+        <button
+          onClick={handleFocus}
+          className="w-full px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800 hover:text-white flex items-center gap-2"
+          disabled
+          title="Coming soon"
+        >
+          <span className="text-gray-500">🎯</span>
+          <span className="text-gray-500">Focus (coming soon)</span>
+        </button>
+
+        <div className="border-t border-gray-700 my-1" />
+
+        <button
+          onClick={handleCollapseAll}
+          className="w-full px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800 hover:text-white flex items-center gap-2"
+        >
+          <span className="text-gray-500">⏪</span>
+          Collapse All
+        </button>
+
+        <button
+          onClick={handleShowAll}
+          className="w-full px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800 hover:text-white flex items-center gap-2"
+        >
+          <span className="text-gray-500">👁</span>
+          Show All
+          {nodeCount > SHOW_ALL_WARNING_THRESHOLD && (
+            <span className="ml-auto text-xs text-yellow-500">⚠️</span>
+          )}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export default BubbleContextMenu

@@ -76,7 +76,7 @@ Open an issue or submit a PR. See our [documentation](https://astrolabe-lean.io/
 
 ## Collaborating Team
 
-**[Xinze Li](https://lixinze.xyz/)**  
+**[Xinze Li](https://lixinze.xyz/)**
 **[Alejandro Radisic](https://github.com/alerad)**
 
 ## License

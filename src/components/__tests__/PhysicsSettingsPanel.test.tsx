@@ -31,8 +31,8 @@ describe('PhysicsSettingsPanel', () => {
       expect(DEFAULT_PHYSICS).toHaveProperty('adaptiveSpringScale')
     })
 
-    it('should have clustering enabled by default', () => {
-      expect(DEFAULT_PHYSICS.clusteringEnabled).toBe(true)
+    it('should have clustering disabled by default (enabled per-lens)', () => {
+      expect(DEFAULT_PHYSICS.clusteringEnabled).toBe(false)
     })
 
     it('should have adaptive springs enabled by default', () => {
